@@ -7,11 +7,11 @@ import {
 import { Search, Ban, VolumeX, LogOut, MessageSquare } from 'lucide-react'
 import PageStub from '@/components/PageStub'
 import { useServerQuery } from '@/hooks/useServerQuery'
-import { useSteamId } from '@/services/steam'
 import type { Player, Team } from '@/types/api'
 
 const teamColor: Record<Team, string> = {
   'D-Class': 'text-scp-warn',
+  Chaos: 'text-scp-warn',
   Foundation: 'text-white',
   SCP: 'text-scp-err',
   Spectator: 'text-ink-mute',
@@ -29,6 +29,7 @@ export default function Players() {
       { accessorKey: 'nickname', header: 'Nickname' },
       { accessorKey: 'role', header: 'Role' },
       { accessorKey: 'team', header: 'Team' },
+      { accessorKey: 'steamId', header: 'SteamID' },
     ],
     [],
   )
@@ -47,7 +48,6 @@ export default function Players() {
   return (
     <PageStub code="M-03" title="Players">
       <div className="space-y-4">
-        {/* 工具栏 */}
         <div className="flex items-center justify-between">
           <span className="font-mono text-[11px] uppercase tracking-wider text-ink-mute">
             {players.length} online
@@ -80,12 +80,8 @@ export default function Players() {
 }
 
 function PlayerCard({ player }: { player: Player }) {
-  const { data: steam, isFetching } = useSteamId(player.nickname)
-  const [collapsed, setCollapsed] = useState(true)
-
   return (
     <div className="border border-ink-border bg-ink-deep p-4 transition-colors hover:border-ink-mute">
-      {/* 头部：昵称 + team 色 */}
       <div className="flex items-start justify-between">
         <div className="min-w-0">
           <div className="truncate font-mono text-[13px] text-white">{player.nickname}</div>
@@ -98,23 +94,16 @@ function PlayerCard({ player }: { player: Player }) {
         </div>
       </div>
 
-      {/* 信息行 */}
       <dl className="mt-3 space-y-1 font-mono text-[11px]">
         <Row k="Role" v={player.role} />
         <Row k="Team" v={player.team} />
+        <Row k="SteamID" v={player.steamId || '—'} accent />
         <Row
-          k="SteamID"
-          v={isFetching ? '…' : steam?.steamId ?? '—'}
-          accent
-          onToggle={() => setCollapsed((c) => !c)}
-          collapsed={collapsed}
+          k="Pos"
+          v={`${player.x.toFixed(1)}, ${player.y.toFixed(1)}, ${player.z.toFixed(1)}`}
         />
-        {!collapsed && steam?.persona && (
-          <Row k="Persona" v={steam.persona} />
-        )}
       </dl>
 
-      {/* 操作（预留） */}
       <div className="mt-3 flex items-center gap-2 border-t border-ink-border pt-3">
         <Act icon={LogOut} label="Kick" />
         <Act icon={Ban} label="Ban" danger />
@@ -126,27 +115,16 @@ function PlayerCard({ player }: { player: Player }) {
 }
 
 function Row({
-  k, v, accent, onToggle, collapsed,
+  k, v, accent,
 }: {
   k: string; v: string; accent?: boolean
-  onToggle?: () => void; collapsed?: boolean
 }) {
   return (
     <div className="flex items-center justify-between gap-2">
       <span className="uppercase tracking-wider text-ink-mute">{k}</span>
-      <button
-        type="button"
-        onClick={onToggle}
-        disabled={!onToggle}
-        className={[
-          'truncate text-right',
-          accent ? 'text-white' : 'text-ink-mute',
-          onToggle ? 'cursor-pointer hover:underline' : 'cursor-default',
-        ].join(' ')}
-        title={onToggle ? (collapsed ? 'expand' : 'collapse') : undefined}
-      >
+      <span className={['truncate text-right', accent ? 'text-white' : 'text-ink-mute'].join(' ')}>
         {v}
-      </button>
+      </span>
     </div>
   )
 }

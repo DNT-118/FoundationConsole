@@ -1,4 +1,4 @@
-﻿# Foundation Console（FDC）
+# Foundation Console（FDC）
 
 面向 **SCP: Secret Laboratory** 服主的浏览器端管理面板。对接 [SLDataAPI](https://github.com/DNTOF/SLDataAPI)，在本地浏览器里查看人数、回合、玩家列表等；Token 只存在你自己的浏览器里，直连你填的服务器地址。
 
@@ -43,6 +43,20 @@ npm run dev
 npm run build
 npm run preview
 ```
+
+## 与 SLDataAPI 的字段对齐（get_sl_data）
+
+已对齐 `Data/Models.cs` 当前快照，包括：
+
+| 字段 | FDC 用途 |
+|------|----------|
+| `steam_id` / `x,y,z` | Players 卡片显示 |
+| `game_version` / `active_holiday` / `voice_port` | Dashboard |
+| `dntof_plugins`（SLPlayer / OmegaWarhead） | Dashboard API Health |
+| `adapted_plugins` | 适配插件数量 |
+| 队伍中文 `D级` / `混沌` / `基金会` / `SCP` / `观察者` | Team 映射（含独立 Chaos） |
+
+数据面仍使用 `GET /get_sl_data?token=`（verify_token）；控制面 Bearer Key 尚未接入 UI。
 
 ## 配置说明
 

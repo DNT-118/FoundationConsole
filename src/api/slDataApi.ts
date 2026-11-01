@@ -14,6 +14,7 @@ export function createSlDataApi(config: SlDataApiConfig): DataSource {
     id: string,
     opts?: ServerSnapshotOptions,
   ): Promise<ServerState> {
+    // Data plane: verify_token query param (dual-track auth)
     const url = `${base}/get_sl_data?token=${encodeURIComponent(config.token)}`
 
     const res = await fetch(url, {

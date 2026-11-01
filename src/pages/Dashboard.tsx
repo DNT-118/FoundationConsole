@@ -1,4 +1,4 @@
-import { Activity, Users, Cpu, Database, Server, Clock, ShieldAlert } from 'lucide-react'
+import { Activity, Users, Cpu, Database, Server, Clock, ShieldAlert, Gamepad2, PartyPopper, Mic2 } from 'lucide-react'
 import { Suspense, lazy } from 'react'
 import PageStub from '@/components/PageStub'
 import { useServerQuery } from '@/hooks/useServerQuery'
@@ -13,18 +13,18 @@ export default function Dashboard() {
   const { data, isFetching, isError } = useServerQuery()
   const status = deriveStatus(data)
   const meta = statusMeta[status]
+  const omega = data?.dntofPlugins.omegaWarhead
+  const adaptedCount = data?.adaptedPlugins.length ?? 0
 
   return (
     <PageStub code="M-01" title="Dashboard">
       <div className="relative">
-        {/* 极克制 3D 背景：不抢主体、不响应指针 */}
         <div className="pointer-events-none absolute inset-x-0 -top-2 -z-0 h-[360px] opacity-50">
           <Suspense fallback={null}>
             <FoundationScene />
           </Suspense>
         </div>
       <div className="relative z-10 grid grid-cols-12 gap-3">
-        {/* 基金会状态 — 跨3列 */}
         <Card className="col-span-12 md:col-span-3 row-span-2">
           <CardLabel icon={ShieldAlert} text="Foundation Status" />
           <div className={`mt-2 font-mono text-[28px] uppercase tracking-[0.15em] ${meta.color}`}>
@@ -41,25 +41,38 @@ export default function Dashboard() {
         <StatCard icon={Database} label="Phase" value={data?.currentPhase ?? '—'} />
         <StatCard icon={Clock} label="Round" value={data ? `${data.roundDuration}s` : '—'} />
         <StatCard icon={Activity} label="Nuke" value={data?.nukeStatus ?? '—'} />
+        <StatCard icon={Gamepad2} label="Game Ver" value={data?.gameVersion || '—'} />
+        <StatCard icon={PartyPopper} label="Holiday" value={data?.activeHoliday || 'None'} />
+        <StatCard icon={Mic2} label="Voice Port" value={data ? (data.voicePort ? String(data.voicePort) : 'OFF') : '—'} />
 
-        {/* 队伍分布 */}
         <Card className="col-span-12 md:col-span-6">
           <CardLabel icon={Users} text="Team Distribution" />
-          <div className="mt-3 grid grid-cols-4 gap-2 font-mono text-[11px]">
+          <div className="mt-3 grid grid-cols-5 gap-2 font-mono text-[11px]">
             <TeamStat label="D-CLASS" value={data?.teamCounts['D-Class']} />
+            <TeamStat label="CHAOS" value={data?.teamCounts.Chaos} />
             <TeamStat label="FOUNDATION" value={data?.teamCounts.Foundation} />
             <TeamStat label="SCP" value={data?.teamCounts.SCP} />
             <TeamStat label="SPECTATOR" value={data?.teamCounts.Spectator} />
           </div>
         </Card>
 
-        {/* API 健康度 */}
         <Card className="col-span-12 md:col-span-6">
           <CardLabel icon={Database} text="API Health" />
           <div className="mt-3 space-y-1.5 font-mono text-[11px] text-ink-mute">
-            <Row k="Source" v="SLDataAPI" />
+            <Row k="Source" v="SLDataAPI /get_sl_data" />
             <Row k="State" v={isFetching ? 'SYNC…' : isError ? 'ERR' : 'IDLE'} />
             <Row k="Players" v={data ? String(data.playersCount) : '—'} />
+            <Row k="Adapted" v={data ? String(adaptedCount) : '—'} />
+            <Row
+              k="Omega"
+              v={
+                omega?.present
+                  ? `${omega.phase}${omega.countdown != null ? ` ${omega.countdown}s` : ''}`
+                  : omega === null
+                    ? 'not loaded'
+                    : '—'
+              }
+            />
             <Row k="Fetched" v={data ? new Date(data.fetchedAt).toLocaleTimeString() : '—'} />
           </div>
         </Card>

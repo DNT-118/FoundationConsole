@@ -2,42 +2,32 @@ import { useQuery } from '@tanstack/react-query'
 
 export interface SteamProfile {
   steamId: string
-  /** Steam 头像 URL；真实接口返回。 */
+  /** 平台同源头像地址（/api/steam/avatar?steamid=…）；无头像/获取失败时无此字段。 */
   avatar?: string
-  /** 真实 Steam 昵称；真实接口返回。 */
+  /** 真实 Steam 昵称（steamcommunity 返回）。 */
   persona?: string
 }
 
 /**
- * SteamID 自动查询。
- * 当前服务端（SLDataAPI）未暴露 steamId，先用昵称占位哈希作为本地 stable id，
- * 后期服务端升级暴露真实接口后，仅需把 fetchSteamId 的实现替换为真实调用，
- * 上层 Players 页无需改动。
+ * 通过平台后端获取真实 Steam 资料（头像/昵称）。
+ * 后端代理 steamcommunity XML 接口（无需 API key）并缓存 24h。
  */
-export function fetchSteamId(nickname: string): Promise<SteamProfile> {
-  return new Promise((resolve) => {
-    // 占位：基于昵称派生稳定 STEAMID0 形式，保证 UI 有可填值且稳定。
-    let h = 0
-    for (let i = 0; i < nickname.length; i++) {
-      h = (h * 31 + nickname.charCodeAt(i)) >>> 0
-    }
-    const y = h % 1000
-    const z = (h >> 10) % 1000000
-    const steamId = `STEAM_0:1:${z}`
-    resolve({ steamId, persona: nickname })
-    // 故意不引用 y 以避免 lint 警告，留作未来真实接口参数位。
-    void y
-  })
+export async function fetchSteamProfile(steamId: string): Promise<SteamProfile | null> {
+  const resp = await fetch(`/api/steam/profile?steamid=${encodeURIComponent(steamId)}`)
+  if (!resp.ok) return null
+  const j = await resp.json()
+  if (!j.success) return null
+  return { steamId: j.steamId, avatar: j.avatar, persona: j.persona }
 }
 
-/** 按 nickname 缓存自动查询（10min stale）。 */
-export function useSteamId(nickname: string | undefined, enabled = true) {
-  return useQuery<SteamProfile>({
-    queryKey: ['steam', nickname ?? ''],
-    enabled: !!nickname && enabled,
+/** 按 steamId 缓存查询（10min stale）。steamId 缺省时不请求。 */
+export function useSteamId(steamId: string | undefined, enabled = true) {
+  return useQuery<SteamProfile | null>({
+    queryKey: ['steam', steamId ?? ''],
+    enabled: !!steamId && enabled,
     staleTime: 10 * 60_000,
     gcTime: 30 * 60_000,
     retry: 0,
-    queryFn: () => fetchSteamId(nickname as string),
+    queryFn: () => fetchSteamProfile(steamId as string),
   })
 }

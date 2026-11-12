@@ -1,80 +1,118 @@
 # Foundation Console（FDC）
 
-面向 **SCP: Secret Laboratory** 服主的 Web 管理面板，开源（Apache-2.0）。对接 [SLDataAPI](https://github.com/DNTOF/SLDataAPI)，可以在本机运行，也可以构建成静态文件部署到你自己的服务器，查看人数、回合、玩家列表等。
+面向 **SCP: Secret Laboratory** 服主的 Web 管理平台，开源（Apache-2.0）。由 React 前端和 Node.js 后端组成，部署在你自己的服务器上，通过 [SLDataAPI](https://github.com/DNTOF/SLDataAPI) 读取和控制游戏服务器。
 
-> 凭据说明：服务器地址和 Token 只保存在你自己的浏览器（`localStorage`）里，请求由浏览器直接发往你填写的 SLDataAPI 服务器，不经过作者或任何第三方。移动端请看 [SLConsole](https://github.com/DNTOF/SLConsole)。
-
-在线演示：<https://dnt-118.github.io/FoundationConsole/>（演示版，来自 `pages-demo` 分支，功能有限制；完整使用请按下文自行部署）。
+在线演示：<https://dnt-118.github.io/FoundationConsole/>
 
 ## 功能概览
 
-| 模块 | 状态 |
-|------|------|
-| 多服务器配置 / 切换 | 可用（localStorage） |
-| Dashboard（人数 / 回合 / 延迟） | 可用 |
-| Players | 可用 |
-| Servers 管理 | 可用 |
-| Console / RemoteAdmin / Plugins / Files / Logs / BanList / API / Settings / About | 占位页（后续迭代） |
+- 多用户登录：首个账户为管理员，`admin` / `user` / `guest` 三级权限，可选 TOTP 双因素验证
+- 按用户隔离的服务器配置，支持多台游戏服务器
+- Dashboard、玩家、插件、地图、日志、举报、事件、封禁列表、文件、控制台、RemoteAdmin
+- 全服广播、CASSIE、管理聊天、语音监听（经后端代理 SLDataAPI 语音口）
+- WebSocket 实时状态与控制通道，自动回退 HTTP
+- 公告、关于页鸣谢、SMTP 邮件验证码（QQ 邮箱 / Outlook OAuth2）、Steam 头像与昵称
+- 中英文界面、主题切换
 
-数据源默认走 SLDataAPI 的 `GET /get_sl_data`（`verify_token` 查询参数）。
+## 凭据与安全
+
+- 游戏服 VerifyToken / API Key、SMTP 凭据、Steam Key、TOTP Secret 以 **AES-256-GCM** 加密保存在你自己服务器的数据目录（默认 `server/data/`），主密钥为 `server/data/master.key` 或环境变量 `PFC_MASTER_KEY`。
+- 这些凭据只由后端发往你配置的 SLDataAPI 服务器（Steam Key 发往 Steam Web API，SMTP 凭据发往你配置的邮件服务器）；浏览器只访问同源 `/api`，不持有游戏服凭据。作者和任何第三方都接触不到这些数据，平台也不含遥测。
+- 密码使用 scrypt 加盐哈希，会话保存在服务端，7 天过期；非管理员不能把服务器指向私网地址。
+
+详见 [安全说明](docs/security.md) 与 [数据与备份](docs/data-and-backup.md)。
+
+## 架构
+
+```text
+浏览器
+  │ HTTPS / WebSocket（同源）
+  ▼
+反向代理（Nginx / Caddy，可选）
+  │
+  ▼
+Foundation Console 后端 :3000（server/server.js）
+  ├─ dist/              React 单页应用
+  ├─ /api/auth/*        注册、登录、2FA、会话
+  ├─ /api/admin/*       用户、公告、SMTP、Steam 配置
+  ├─ /api/servers       每个用户的服务器配置
+  └─ /api/sl/*          SLDataAPI 数据 / 控制 / WebSocket / 语音代理
+        │ Authorization: Bearer <VerifyToken 或 API Key>
+        ▼
+你的 SCP:SL 服务器 + SLDataAPI
+```
+
+详见 [架构说明](docs/architecture.md)。
 
 ## 环境要求
 
-- Node.js **18+**
-- 一台已安装并启用 HTTP 数据接口的 SLDataAPI 服务器
+- Node.js **22.14+**（推荐 24）
+- 已安装 SLDataAPI（建议 2.6.0 PEAK 及以上）的 SCP:SL 服务器
 
 ## 本地运行
 
 ```bash
-# Windows
-./install.ps1
-# 或 macOS / Linux / Git Bash / WSL
-./install.sh
-
-# 编辑 .env（已从 .env.example 复制）
-# VITE_SL_DATA_API_BASE=http://127.0.0.1:8081
-# VITE_SL_DATA_API_TOKEN=你的_verify_token
-
-npm run dev
-# 浏览器打开提示的本地地址，也可在 UI 里「Add Server」按服配置
+npm ci
+npm ci --prefix server
+npm run build          # 构建前端到 dist/
+PORT=3000 npm start    # 启动后端，同时托管 dist/
 ```
+
+浏览器打开 <http://127.0.0.1:3000>。开发前端时可另开终端运行 `npm run dev`（Vite 开发服务器）。
 
 ## 自行部署
 
+1. 构建发布包，或在 Releases 下载已签名的发布包：
+
+   ```bash
+   ./build-package.sh     # 产物：release/fdc-v<版本>.tar.gz（前端 dist + 混淆后端）
+   ```
+
+2. 解压到服务器，在包根目录执行安装脚本：
+   - Linux：`sudo bash install.sh`（安装依赖、生成主密钥、注册 systemd 服务）
+   - Windows：`powershell -ExecutionPolicy Bypass -File install.ps1`
+
+   也可以手动运行：`npm ci --omit=dev --prefix server && node server/server.js`，用 `pfc.service` 模板交给 systemd 守护。
+
+3. 推荐用 Nginx / Caddy 反代并配置 HTTPS，转发 WebSocket（`/api/sl/ws`、`/api/sl/voice`），并设置 `PFC_PUBLIC_URL`。
+
+### 配置
+
+在环境变量或 `.env`（参考 [.env.example](.env.example)）中设置：
+
+| 变量 | 默认值 | 含义 |
+|------|--------|------|
+| `PORT` / `HOST` | `3000` / `0.0.0.0` | 监听端口与地址；同机反代可设 `HOST=127.0.0.1` |
+| `PFC_PUBLIC_URL` | 空 | 浏览器访问的地址，如 `https://console.example.com`，经反代时用于同源校验 |
+| `PFC_DATA_DIR` | `server/data` | 运行数据目录，首次启动自动创建 |
+| `PFC_MASTER_KEY` | 自动生成 `master.key` | 加密主密钥；设置后不再使用文件 |
+| `PFC_STEAM_KEY` | 空 | Steam Web API Key（也可在设置页填写） |
+| `SSL_CERT_PATH` / `SSL_KEY_PATH` | `server/certs/*.pem` | 让 Node 直接提供 HTTPS 时使用 |
+
+### 首次启动与管理员
+
+1. 首次启动后数据目录为空，`/api/auth/status` 返回 `firstRun: true`。
+2. 打开面板注册第一个账户（QQ 邮箱格式，首个账户无需验证码），它会自动成为管理员；此引导只发生一次。在完成注册前不要把端口暴露到公网，或先只监听 `127.0.0.1`。
+3. 管理员在「设置」中配置 SMTP（后续用户注册需要邮箱验证码）、Steam Key、公告等，并建议启用 2FA。
+
+### 连接 SLDataAPI
+
+1. 在游戏服 SLDataAPI 配置中设置强随机 `verify_token`（数据口）。
+2. 在游戏服控制台执行 `sldataapi apikey create <id> admin`（或 `duty`）生成控制用 API Key。
+3. 在面板「服务器」页添加服务器：填写游戏服主机、SLDataAPI 端口、VerifyToken、API Key（可选，用于控制、事件、语音）、控制连接方式（HTTP / WebSocket）和轮询间隔。语音端口从 `get_sl_data` 的 `voice_port` 自动获取。
+
+后端读取数据时调用 `GET /get_sl_data`，控制操作调用 `/control/*`，适配插件走 `/plugins/*`，实时控制使用 SLDataAPI 的 WebSocket 通道。字段与接口细节见 [PEAK 升级与维护](docs/peak-maintenance.md) 和 [SLDataAPI 契约补充](docs/slapi-contract-addendum.md)。
+
+## 开发与测试
+
 ```bash
-npm run build      # 产物在 dist/
-npm run preview    # 本地预览构建结果
+npm run typecheck
+npm test               # 语法检查 + 后端单元测试 + 前端测试 + 端到端测试（使用临时数据目录）
+npm run build
+npm run obfuscate      # 生成混淆后端 server-dist/
 ```
 
-`dist/` 是纯静态文件，可放到 Nginx、Caddy 等任意静态站点。前端使用 History 路由，部署时请把未知路径回退到 `index.html`（例如 Nginx `try_files $uri /index.html;`）。
-
-如果面板通过 https 访问，浏览器会拦截对 `http://` 服务器的请求（混合内容），请给 SLDataAPI 配好 https；跨域访问时 SLDataAPI 需要放行面板所在的域名（CORS）。
-
-## 与 SLDataAPI 的字段对齐（get_sl_data）
-
-已对齐 `Data/Models.cs` 当前快照，包括：
-
-| 字段 | FDC 用途 |
-|------|----------|
-| `steam_id` / `x,y,z` | Players 卡片显示 |
-| `game_version` / `active_holiday` / `voice_port` | Dashboard |
-| `dntof_plugins`（SLPlayer / OmegaWarhead） | Dashboard API Health |
-| `adapted_plugins` | 适配插件数量 |
-| 队伍中文 `D级` / `混沌` / `基金会` / `SCP` / `观察者` | Team 映射（含独立 Chaos） |
-
-数据面仍使用 `GET /get_sl_data?token=`（verify_token）；控制面 Bearer Key 尚未接入 UI。
-
-## 配置说明
-
-| 变量 | 含义 |
-|------|------|
-| `VITE_SL_DATA_API_BASE` | 默认 SLDataAPI 根地址（无尾斜杠） |
-| `VITE_SL_DATA_API_TOKEN` | 默认 `verify_token`（仅开发/单服场景；多服请用 UI） |
-| `VITE_DATA_SOURCE` | 数据源 id，默认 `sldata` |
-
-注意：`VITE_` 开头的变量会在构建时写进前端产物，公开部署时不要在 `.env` 里填真实 Token，改在 UI 里添加服务器。
-
-UI 里添加的服务器会保存在浏览器 `localStorage` 键 `pfc.servers`（含 Token）。清站点数据即清除。
+更多说明见 [本地开发](docs/local-development.md)。
 
 ## 许可证
 

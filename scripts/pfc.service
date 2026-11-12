@@ -1,0 +1,15 @@
+[Unit]
+Description=Foundation Console Platform
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/pfc
+ExecStart=/usr/bin/env node /opt/pfc/server/server.js
+Environment=PFC_MASTER_KEY=CHANGE_ME
+Environment=NODE_ENV=production
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

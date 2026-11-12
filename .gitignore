@@ -1,11 +1,35 @@
-﻿node_modules/
+node_modules/
 dist/
 .env
 .env.local
 .env.*.local
 *.log
+*.tgz
+*.tar.gz
+*.sha256
+*.sig
+__pycache__/
+*.py[cod]
+.pytest_cache/
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
 *.tsbuildinfo
+server-dist/
+server/public-origin.json
+server/certs/
+pfc-release/
+pfc-release.zip
+release/
+
+# 运行时数据（用户、会话、主密钥、加密配置）只属于你自己的服务器，绝不提交
+server/data/
+data/
+master.key
+.pfc_key
+
+# 私钥与证书
+*.pem
+*.key
+!keys/*.pub.pem

@@ -1,31 +1,24 @@
 import type {
+  DntofInfo,
   SlPlayer,
   SlServerData,
   Player,
   ServerState,
   Team,
-  AdaptedPlugin,
-  DntofPluginsState,
 } from '@/types/api'
 
-/** Matches SLDataAPI DataCollector.GetTeamCN output. */
 const teamMap: Record<string, Team> = {
-  D级: 'D-Class',
-  混沌: 'Chaos',
-  基金会: 'Foundation',
+  'D级': 'D-Class',
   SCP: 'SCP',
-  观察者: 'Spectator',
-  其他: 'Unknown',
-  未知: 'Unknown',
-  // English / legacy fallbacks
-  'D-Class': 'D-Class',
-  ClassD: 'D-Class',
-  Chaos: 'Chaos',
-  ChaosInsurgency: 'Chaos',
-  Foundation: 'Foundation',
-  FoundationForces: 'Foundation',
-  Spectator: 'Spectator',
-  Dead: 'Spectator',
+  基金会: 'Foundation',
+  '九尾狐': 'Foundation',
+  观众: 'Spectator',
+}
+
+/** 剥离 SCPSL 富文本标签：<color=#...> <size=N> <b> <i> 等，并去首尾空白。 */
+const RICH_TAG_RE = /<\/?(color|size|b|i|u|align|lineheight|mspace|cspace|indent|margin|pos|noparse)[^>]*>/gi
+export function stripRichText(raw: string): string {
+  return raw.replace(RICH_TAG_RE, '').trim()
 }
 
 function normalizeTeam(raw: string): Team {
@@ -37,94 +30,66 @@ function normalizePlayer(p: SlPlayer): Player {
     nickname: p.nickname,
     role: p.role,
     team: normalizeTeam(p.team),
-    steamId: p.steam_id ?? '',
-    x: p.x ?? 0,
-    y: p.y ?? 0,
-    z: p.z ?? 0,
+    steamId: p.steam_id || undefined,
+    x: p.x,
+    y: p.y,
+    z: p.z,
   }
 }
 
-function normalizeDntof(raw: SlServerData['dntof_plugins']): DntofPluginsState {
-  if (!raw) return {}
-  const sl = raw.sl_player
-  const omega = raw.omega_warhead
-  return {
-    slPlayer: sl
-      ? {
-          present: sl.present,
-          sourceMode: sl.source_mode,
-          remoteUrl: sl.remote_url,
-          nowPlaying: sl.now_playing,
-        }
-      : sl === null
-        ? null
-        : undefined,
-    omegaWarhead: omega
-      ? {
-          present: omega.present,
-          phase: omega.phase,
-          coinHolders: (omega.coin_holders ?? []).map((c) => ({
-            nickname: c.nickname,
-            count: c.count,
-            position: c.position,
-          })),
-          controllerHolder: omega.controller_holder,
-          countdown: omega.countdown,
-        }
-      : omega === null
-        ? null
-        : undefined,
-  }
+/** 回合阶段码（游戏服返回中文文案，映射为稳定枚举供 UI 翻译）。 */
+export function phaseCode(raw: string): 'waiting' | 'inprogress' | 'ended' | 'paused' | null {
+  if (raw.includes('等待')) return 'waiting'
+  if (raw.includes('进行')) return 'inprogress'
+  if (raw.includes('结束')) return 'ended'
+  if (raw.includes('暂停')) return 'paused'
+  return null
 }
 
-function normalizeAdapted(list: SlServerData['adapted_plugins']): AdaptedPlugin[] {
-  return (list ?? []).map((p) => ({
-    id: p.id,
-    name: p.name,
-    version: p.version,
-    capabilities: p.capabilities ?? [],
-    routes: p.routes ?? [],
-    actions: p.actions,
-    status: p.status,
-  }))
+/** 核弹状态码（倒计时详情用 nukeCountdown 秒数渲染）。 */
+export function nukeCode(raw: string): 'inactive' | 'countdown' | 'detonated' | null {
+  if (raw.includes('未激活')) return 'inactive'
+  if (raw.includes('倒计时')) return 'countdown'
+  if (raw.includes('爆炸')) return 'detonated'
+  return null
 }
 
 export function normalizeServerData(
   raw: SlServerData,
   id = 'primary',
 ): ServerState {
-  const players = (raw.players ?? []).map(normalizePlayer)
-  const chaosFromList = players.filter((p) => p.team === 'Chaos').length
-  const dFromList = players.filter((p) => p.team === 'D-Class').length
+  const players = raw.players.map(normalizePlayer)
 
   const teamCounts: Record<Team, number> = {
-    'D-Class': dFromList || Math.max(0, (raw.d_count ?? 0) - chaosFromList),
-    Chaos: chaosFromList,
-    Foundation: raw.foundation_count ?? 0,
-    SCP: raw.scp_count ?? 0,
-    Spectator: raw.spectator_count ?? 0,
-    Unknown: players.filter((p) => p.team === 'Unknown').length,
+    'D-Class': raw.d_count,
+    Foundation: raw.foundation_count,
+    SCP: raw.scp_count,
+    Spectator: raw.spectator_count,
+    Unknown: 0,
   }
+
+  const phase = stripRichText(raw.current_phase)
+  const nuke = stripRichText(raw.nuke_status)
 
   return {
     id,
-    name: raw.server_name,
+    name: stripRichText(raw.server_name),
     online: raw.online,
     playersCount: raw.players_count,
     maxPlayers: raw.max_players,
     roundStarted: raw.round_started,
     roundDuration: raw.round_duration,
-    currentPhase: raw.current_phase,
-    nukeStatus: raw.nuke_status,
+    currentPhase: phase,
+    phaseCode: phaseCode(phase),
+    nukeStatus: nuke,
+    nukeCode: nukeCode(nuke),
     nukeCountdown: raw.nuke_countdown,
-    voicePort: raw.voice_port ?? 0,
-    gameVersion: raw.game_version ?? '',
-    activeHoliday: raw.active_holiday ?? 'None',
     teamCounts,
     ping: raw.ping,
     players,
-    dntofPlugins: normalizeDntof(raw.dntof_plugins),
-    adaptedPlugins: normalizeAdapted(raw.adapted_plugins),
     fetchedAt: Date.now(),
+    dntof: (raw.dntof_plugins as DntofInfo | null | undefined) ?? null,
+    adaptedPlugins: raw.adapted_plugins ?? [],
+    voicePort: raw.voice_port ?? 0,
   }
 }

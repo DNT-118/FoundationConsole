@@ -23,6 +23,10 @@ export function dataSourceFor(server: ServerConfig): DataSource {
   switch (defaultDataSourceId) {
     case 'sldata':
     default:
-      return createSlDataApi({ baseUrl: server.baseUrl, token: server.token })
+      return createSlDataApi({
+        serverId: server.id,
+        // 凭据不回传明文：数据/控制走平台端点（serverId 白名单），平台内部自动请求游戏服
+        controlEnabled: server.apiKeyConfigured ?? server.controlEnabled ?? !!server.apiKey,
+      })
   }
 }

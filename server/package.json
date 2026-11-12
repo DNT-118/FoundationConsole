@@ -1,0 +1,14 @@
+{
+  "name": "pfc-server",
+  "private": true,
+  "version": "1.0.0",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22.14.0"
+  },
+  "dependencies": {
+    "nodemailer": "^9.0.3",
+    "ws": "^8.21.3"
+  },
+  "license": "Apache-2.0"
+}

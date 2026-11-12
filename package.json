@@ -1,38 +1,47 @@
 {
   "name": "foundation-console",
   "private": true,
-  "version": "0.1.0",
-  "description": "Foundation Console (FDC) — browser console for SCP:SL servers via SLDataAPI",
+  "version": "0.2.0",
+  "description": "Foundation Console (FDC) — SCP:SL 服务器 Web 管理平台（React 前端 + Node 后端），对接 SLDataAPI",
   "license": "Apache-2.0",
   "author": "DNT_OF / DNTOF",
-  "type": "module",
   "repository": {
     "type": "git",
-    "url": "https://github.com/DNTOF/FoundationConsole.git"
+    "url": "https://github.com/DNT-118/FoundationConsole.git"
   },
-  "homepage": "https://github.com/DNTOF/FoundationConsole",
+  "homepage": "https://github.com/DNT-118/FoundationConsole",
   "bugs": {
-    "url": "https://github.com/DNTOF/FoundationConsole/issues"
+    "url": "https://github.com/DNT-118/FoundationConsole/issues"
   },
+  "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc -b --noEmit"
+    "serve": "node server/server.js",
+    "start": "node server/server.js",
+    "typecheck": "tsc -b --noEmit",
+    "test": "npm run test:syntax && npm run test:unit && npm run test:frontend && npm run test:e2e",
+    "test:syntax": "node scripts/check-syntax.cjs",
+    "test:unit": "node server/totp.test.js && node --test server/security.test.js server/store.test.js server/upstream.test.js server/wsHub.test.js server/staticFiles.test.js",
+    "test:e2e": "node server/e2e.test.js",
+    "test:frontend": "node --experimental-strip-types --test tests/*.test.mjs",
+    "obfuscate": "node server/obfuscate.js",
+    "package": "bash build-package.sh"
   },
   "dependencies": {
-    "@react-three/drei": "^10.0.0",
     "@react-three/fiber": "^9.0.0",
     "@tanstack/react-query": "^5.59.0",
     "@tanstack/react-table": "^8.20.5",
-    "echarts": "^5.5.1",
+    "dompurify": "^3.4.16",
     "framer-motion": "^11.11.0",
-    "gsap": "^3.12.5",
     "lucide-react": "^0.454.0",
+    "marked": "^18.0.10",
+    "nodemailer": "^9.0.3",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-hook-form": "^7.53.0",
-    "react-router-dom": "^6.28.0",
+    "react-router-dom": "^7.18.2",
     "three": "^0.169.0",
     "zustand": "^5.0.0"
   },
@@ -41,14 +50,15 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@types/three": "^0.169.0",
-    "@vitejs/plugin-react": "^4.3.3",
+    "@vitejs/plugin-react": "^6.1.0",
     "autoprefixer": "^10.4.20",
+    "javascript-obfuscator": "^5.5.0",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.15",
     "typescript": "^5.6.3",
-    "vite": "^5.4.11"
+    "vite": "^8.2.2"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22.14.0"
   }
 }

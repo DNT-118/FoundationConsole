@@ -1,4 +1,5 @@
-import { useMemo, useRef } from 'react'
+import { useReducedMotion } from 'framer-motion'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas, useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 
@@ -48,10 +49,18 @@ function Particles({ count = 220 }: { count?: number }) {
 }
 
 export default function FoundationScene() {
+  const reduced = useReducedMotion()
+  const [visible, setVisible] = useState(!document.hidden)
+  useEffect(() => {
+    const update = () => setVisible(!document.hidden)
+    document.addEventListener('visibilitychange', update)
+    return () => document.removeEventListener('visibilitychange', update)
+  }, [])
   return (
     <Canvas
       camera={{ position: [0, 0, 6], fov: 50 }}
-      dpr={[1, 2]}
+      dpr={[1, 1.5]}
+      frameloop={visible && !reduced ? 'always' : 'demand'}
       gl={{ alpha: true, antialias: true }}
       style={{ background: 'transparent' }}
     >

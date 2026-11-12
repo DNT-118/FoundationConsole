@@ -1,8 +1,6 @@
 import { createSlDataApi } from './slDataApi'
 import type { DataSource } from './DataSource'
 import type { ServerConfig } from '@/store/serversStore'
-import { IS_DEMO } from '@/demo/mode'
-import { createDemoDataSource, guardDataSource, isDemoUrl } from '@/demo/demoSource'
 
 export type DataSourceId = 'sldata' | 'local' | 'server'
 
@@ -22,17 +20,13 @@ export const defaultDataSourceId: DataSourceId =
 
 /** 按某台服务器配置构造对应数据源（当前仅 SLDataAPI）。 */
 export function dataSourceFor(server: ServerConfig): DataSource {
-  if (IS_DEMO) {
-    // 演示版：demo:// 走本地模拟；其它地址先做混合内容 / CORS 检查
-    if (isDemoUrl(server.baseUrl)) return createDemoDataSource()
-    return guardDataSource(
-      createSlDataApi({ baseUrl: server.baseUrl, token: server.token }),
-      server.baseUrl,
-    )
-  }
   switch (defaultDataSourceId) {
     case 'sldata':
     default:
-      return createSlDataApi({ baseUrl: server.baseUrl, token: server.token })
+      return createSlDataApi({
+        serverId: server.id,
+        // 凭据不回传明文：数据/控制走平台端点（serverId 白名单），平台内部自动请求游戏服
+        controlEnabled: server.apiKeyConfigured ?? server.controlEnabled ?? !!server.apiKey,
+      })
   }
 }

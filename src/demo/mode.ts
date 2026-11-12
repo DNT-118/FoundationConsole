@@ -5,8 +5,8 @@
  */
 export const IS_DEMO: boolean = import.meta.env.VITE_FDC_DEMO === '1'
 
-/** 演示内置数据源的地址前缀，例如 demo://sample */
-export const DEMO_URL_PREFIX = 'demo://'
-
 export const DEMO_BANNER_TEXT =
   '注意，你正在使用Github Pages演示版本，此版本所有数据均存储在本地浏览器且某些功能不可用'
+
+/** 演示内置模拟服务器的主机名（只有它会返回模拟数据）。 */
+export const DEMO_MOCK_HOST = 'demo.local'

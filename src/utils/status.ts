@@ -1,35 +1,37 @@
 import type { FoundationStatus, ServerState } from '@/types/api'
 
 /**
- * 基金会状态推断：
- *  - 无服务器/离线 → KETER
- *  - 核弹倒计时 / Omega 锁定或引爆中 → KETER
- *  - 人满 / 核弹未激活但 Omega 收集中 / 万圣节等活跃节日 → EUCLID
- *  - 在线且平稳 → SAFE
- *  - THAUMIEL 保留：管理员手动设定（目前不自动触发）
+ * 基金会状态推断（全部绑定服务器的可达性聚合）：
+ *  - 所有服务器正常上线 → SAFE
+ *  - 部分服务器不可达 → EUCLID
+ *  - 所有服务器不可达 → KETER
+ *  - 未绑定任何服务器 → SAFE（无故障对象）
+ * 等级词固定英文显示（SAFE/EUCLID/KETER），不随界面语言翻译。
  */
-export function deriveStatus(state: ServerState | undefined): FoundationStatus {
-  if (!state || !state.online) return 'KETER'
+export interface FleetEntry {
+  data?: ServerState | undefined
+  isError?: boolean
+}
 
-  const nuke = state.nukeStatus ?? ''
-  if (nuke.includes('倒计时') || nuke.includes('已爆炸')) return 'KETER'
+export function deriveFleetStatus(entries: FleetEntry[]): FoundationStatus {
+  if (entries.length === 0) return 'SAFE'
+  const reachable = entries.filter((e) => e?.data?.online === true).length
+  if (reachable === 0) return 'KETER'
+  if (reachable === entries.length) return 'SAFE'
+  return 'EUCLID'
+}
 
-  const omega = state.dntofPlugins.omegaWarhead
-  if (omega?.present && ['locked', 'counting', 'detonation', 'confirming'].includes(omega.phase)) {
-    return 'KETER'
-  }
-
-  const fill = state.maxPlayers > 0 ? state.playersCount / state.maxPlayers : 0
-  if (fill >= 0.85) return 'EUCLID'
-  if (omega?.present && ['collecting', 'idle_holding'].includes(omega.phase)) return 'EUCLID'
-  if (state.activeHoliday && state.activeHoliday !== 'None') return 'EUCLID'
-
-  return 'SAFE'
+/** 等级词固定英文（用户要求不分语言）。 */
+export const statusLabel: Record<FoundationStatus, string> = {
+  SAFE: 'SAFE',
+  EUCLID: 'EUCLID',
+  KETER: 'KETER',
+  THAUMIEL: 'THAUMIEL',
 }
 
 export const statusMeta: Record<FoundationStatus, { color: string; note: string }> = {
-  SAFE: { color: 'text-scp-safe', note: 'NORMAL OPERATIONS' },
-  EUCLID: { color: 'text-scp-warn', note: 'ELEVATED ACTIVITY' },
-  KETER: { color: 'text-scp-err', note: 'CONTAINMENT RISK' },
-  THAUMIEL: { color: 'text-white', note: 'ACTIVE PROTOCOL' },
+  SAFE:     { color: 'text-scp-safe', note: 'NORMAL OPERATIONS' },
+  EUCLID:   { color: 'text-scp-warn', note: 'ELEVATED ACTIVITY' },
+  KETER:    { color: 'text-scp-err',  note: 'CONTAINMENT RISK' },
+  THAUMIEL: { color: 'text-foreground', note: 'ACTIVE PROTOCOL' },
 }

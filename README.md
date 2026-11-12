@@ -1,85 +1,39 @@
-# Foundation Console（FDC）
+# Foundation Console（FDC）· GitHub Pages 演示分支
 
-面向 **SCP: Secret Laboratory** 服主的浏览器端管理面板。对接 [SLDataAPI](https://github.com/DNTOF/SLDataAPI)，在本地浏览器里查看人数、回合、玩家列表等；Token 只存在你自己的浏览器里，直连你填的服务器地址。
+> 这是 **`pages-demo` 演示分支**，只用于构建 GitHub Pages 在线演示，不是正式源码。
+> 正式开源版本、部署说明和完整代码请看 [`main` 分支](https://github.com/DNT-118/FoundationConsole/tree/main)。
 
-> 安全说明：凭据不会上传到作者或任何第三方。即便开源，开发者也接触不到你填的 Key。移动端请看 [SLConsole](https://github.com/DNTOF/SLConsole)。
+在线演示：<https://dnt-118.github.io/FoundationConsole/>
 
-## 功能概览
+FDC 是面向 **SCP: Secret Laboratory** 服主的 Web 管理面板，对接 [SLDataAPI](https://github.com/DNTOF/SLDataAPI)。本分支在 `main` 的基础上加了一个构建期「演示模式」，产物是可以直接放在 GitHub Pages 上的纯静态页面。
 
-| 模块 | 状态 |
-|------|------|
-| 多服务器配置 / 切换 | 可用（localStorage） |
-| Dashboard（人数 / 回合 / 延迟） | 可用 |
-| Players | 可用 |
-| Servers 管理 | 可用 |
-| Console / RemoteAdmin / Plugins / Files / Logs / BanList / API / Settings / About | 占位页（后续迭代） |
+## 演示版限制
 
-数据源默认走 SLDataAPI 的 `GET /get_sl_data`（`verify_token` 查询参数）。
-
-## 在线演示（GitHub Pages）
-
-演示地址：<https://dnt-118.github.io/FoundationConsole/>
-
-演示版来自 `pages-demo` 分支，是纯静态页面，和 `main` 分支的完整版本分开维护：
-
-- 免登录，所有数据（服务器列表、Token、设置）只存在当前浏览器的 `localStorage`（键 `fdc-demo.servers`），清站点数据即清除。
+- 免登录，所有数据（服务器列表、Token、设置）只存在当前浏览器的 `localStorage`（键 `fdc-demo.servers`），清站点数据即清除，换浏览器或设备不会同步。
 - 首次打开会自动添加一台「演示服务器（模拟）」（地址 `demo://sample`），数据在浏览器本地生成，不连接任何真实服务器。
-- 页面是 https，浏览器会拦截访问 `http://` 远程服务器（混合内容）；连接真实 SLDataAPI 需要 https 地址且放行 CORS，否则会显示中文原因。
-- 页面顶部有常驻红色提示栏，不可关闭。完整功能请在本地运行 FDC。
+- 页面是 https，浏览器会拦截对 `http://` 远程服务器的请求（混合内容）；要连接真实 SLDataAPI，需要 https 地址并放行 `dnt-118.github.io` 的跨域请求（CORS），否则页面会显示中文原因。
+- Console / RemoteAdmin / Plugins / Files / Logs / BanList / API / Settings / About 仍是占位页，玩家卡片上的操作按钮不可用。
+- 页面顶部有常驻的红色闪烁提示栏，不可关闭。
 
-本地构建演示版：`npm run build:demo`（默认子路径 `/FoundationConsole/`，可用 `FDC_BASE` 覆盖）。
+完整功能请按 `main` 分支的 README 在本机运行或自行部署。
 
-## 环境要求
+## 本分支的改动
 
-- Node.js **18+**
-- 一台已安装并启用 HTTP 数据接口的 SLDataAPI 服务器
-
-## 快速开始
-
-```bash
-# Windows
-./install.ps1
-# 或 macOS / Linux / Git Bash / WSL
-./install.sh
-
-# 编辑 .env（已从 .env.example 复制）
-# VITE_SL_DATA_API_BASE=http://127.0.0.1:8081
-# VITE_SL_DATA_API_TOKEN=你的_verify_token
-
-npm run dev
-# 浏览器打开提示的本地地址，也可在 UI 里「Add Server」按服配置
-```
-
-生产构建：
-
-```bash
-npm run build
-npm run preview
-```
-
-## 与 SLDataAPI 的字段对齐（get_sl_data）
-
-已对齐 `Data/Models.cs` 当前快照，包括：
-
-| 字段 | FDC 用途 |
-|------|----------|
-| `steam_id` / `x,y,z` | Players 卡片显示 |
-| `game_version` / `active_holiday` / `voice_port` | Dashboard |
-| `dntof_plugins`（SLPlayer / OmegaWarhead） | Dashboard API Health |
-| `adapted_plugins` | 适配插件数量 |
-| 队伍中文 `D级` / `混沌` / `基金会` / `SCP` / `观察者` | Team 映射（含独立 Chaos） |
-
-数据面仍使用 `GET /get_sl_data?token=`（verify_token）；控制面 Bearer Key 尚未接入 UI。
-
-## 配置说明
-
-| 变量 | 含义 |
+| 内容 | 位置 |
 |------|------|
-| `VITE_SL_DATA_API_BASE` | 默认 SLDataAPI 根地址（无尾斜杠） |
-| `VITE_SL_DATA_API_TOKEN` | 默认 `verify_token`（仅开发/单服场景；多服请用 UI） |
-| `VITE_DATA_SOURCE` | 数据源 id，默认 `sldata` |
+| 演示模式开关、提示栏、模拟数据、混合内容 / CORS 提示 | `src/demo/` |
+| 子路径 `/FoundationConsole/`、`404.html` 路由回退、`.nojekyll` | `vite.config.ts`（`--mode demo`） |
+| 自动部署到 GitHub Pages（仅 `pages-demo` 分支推送触发） | `.github/workflows/pages.yml` |
 
-UI 里添加的服务器会保存在浏览器 `localStorage` 键 `pfc.servers`（含 Token）。清站点数据即清除。
+不带 `--mode demo` 时，构建结果与 `main` 行为一致。
+
+## 本地构建演示版
+
+```bash
+npm ci
+npm run build:demo     # 默认子路径 /FoundationConsole/，可用 FDC_BASE 覆盖
+npm run dev:demo       # 本地以演示模式开发
+```
 
 ## 许可证
 

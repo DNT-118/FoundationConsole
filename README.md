@@ -1,12 +1,14 @@
 # Foundation Console（FDC）
 
-面向 **SCP: Secret Laboratory** 服主的 Web 管理平台，开源（Apache-2.0）。由 React 前端和 Node.js 后端组成，部署在你自己的服务器上，通过 [SLDataAPI](https://github.com/DNTOF/SLDataAPI) 读取和控制游戏服务器。
+**SCP: Secret Laboratory 服主团队自部署的私有内部管理平台**（开源，Apache-2.0）。由 React 前端和 Node.js 后端组成，部署在团队自己的服务器上，通过 [SLDataAPI](https://github.com/DNTOF/SLDataAPI) 读取和控制游戏服务器。面向服主与团队成员使用，不是公共托管服务：账户、服务器配置、分享与权限都只属于你自己的部署实例。
 
 在线演示：<https://dnt-118.github.io/FoundationConsole/>
 
 ## 功能概览
 
-- 多用户登录：首个账户为管理员，`admin` / `user` / `guest` 三级权限，可选 TOTP 双因素验证
+- 团队账户：首个账户为管理员，`admin` / `user` / `guest` 三级权限，可选 TOTP 双因素验证
+- 注册模式（默认开放 QQ 邮箱自助注册）：管理员可关闭自助注册或切换为邀请制（一次性邀请码），QQ 邮箱限制不变
+- 服务器可分享给团队成员并按角色授权（只看数据 / 值班 / 管理），服务端强制校验
 - 按用户隔离的服务器配置，支持多台游戏服务器
 - Dashboard、玩家、插件、地图、日志、举报、事件、封禁列表、文件、控制台、RemoteAdmin
 - 全服广播、CASSIE、管理聊天、语音监听（经后端代理 SLDataAPI 语音口）
@@ -110,6 +112,7 @@ PORT=3000 npm start    # 启动后端，同时托管 dist/
 1. 首次启动后数据目录为空，`/api/auth/status` 返回 `firstRun: true`。
 2. 打开面板注册第一个账户（QQ 邮箱格式，首个账户无需验证码），它会自动成为管理员；此引导只发生一次。在完成注册前不要把端口暴露到公网，或先只监听 `127.0.0.1`。
 3. 管理员在「设置」中配置 SMTP（后续用户注册需要邮箱验证码）、Steam Key、公告等，并建议启用 2FA。
+4. **注册模式**（设置 → 注册模式）：默认 `open`（QQ 邮箱自助注册 + 邮箱验证码）；内部部署建议改为 `invite`（管理员生成一次性邀请码）或 `closed`（完全关闭自助注册，由管理员在账号管理中建号）。三种模式都仅限 QQ 邮箱，首个管理员引导不受影响。
 
 ### 连接 SLDataAPI
 
@@ -118,6 +121,27 @@ PORT=3000 npm start    # 启动后端，同时托管 dist/
 3. 在面板「服务器」页添加服务器：填写游戏服主机、SLDataAPI 端口、VerifyToken、API Key（可选，用于控制、事件、语音）、控制连接方式（HTTP / WebSocket）和轮询间隔。语音端口从 `get_sl_data` 的 `voice_port` 自动获取。
 
 后端读取数据时调用 `GET /get_sl_data`，控制操作调用 `/control/*`，适配插件走 `/plugins/*`，实时控制使用 SLDataAPI 的 WebSocket 通道。字段与接口细节见 [PEAK 升级与维护](docs/peak-maintenance.md) 和 [SLDataAPI 契约补充](docs/slapi-contract-addendum.md)。
+
+### 账户与界面设置
+
+- **个性化背景**（设置 → 背景）：默认 / 内置渐变 / 自定义图片 URL（仅 http/https，受 CSP `img-src` 约束）/ 本地上传（≤2MB）。偏好按用户名保存在各浏览器本地（localStorage，不上传服务器）；在「二次元」主题下显示，遮罩强度与模糊可调以保证可读性。
+- **Steam Key**（设置 → Steam API Key）：玩家头像与 Steam 昵称的数据源（免费获取：steamcommunity.com/dev/apikey）。密钥 AES-256-GCM 加密存服务器；也可用环境变量 `PFC_STEAM_KEY` 配置。SLDataAPI 的 `steam_id` 带 `@steam` 后缀（如 `76561198…@steam`），平台已自动剥后缀；`@northwood` / `@discord` / 假人等非 Steam ID 不请求头像。
+- **上游能力信息**（仪表盘 → API 健康度）：通过 WS 控制通道展示上游版本、本连接是否 TLS、证书 SHA-256 指纹与已开启的内测能力（`adapted_actions` / `file_chunks`）。内测能力未开启时相关 UI（适配插件动作、文件分块读写）会直接提示，而不是点了才 404。
+
+### duty Key（值班 Key）权限说明
+
+`duty` 模板偏只读：踢人/封禁/广播/职业/效果/控制台/插件/文件等默认**未授予**。FDC 不绕过上游 ACL——使用 duty Key 时这些操作会如实显示上游 403。如需值班执行某些操作，请在游戏服 `apikey.config` 中对该 Key 的 `endpoints_override` 显式放开（例如）：
+
+```yaml
+keys:
+  - id: duty-1
+    template: duty
+    endpoints_override:
+      /control/broadcast: true
+      /control/moderation/kick: { read: false, write: true }
+```
+
+注意：`/control/adapted/`（适配插件写）与 `/control/files/` 即使 `admin` / `all_control_true` 也不自动授予，必须 `endpoints_override` 显式放开。
 
 ## 开发与测试
 

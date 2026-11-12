@@ -6,12 +6,12 @@
     <meta name="theme-color" content="#050505" />
     <title>Foundation Console · 基金会控制台</title>
     <link rel="icon" href="/favicon.ico?v=5" />
-    <link rel="preconnect" href="https://rsms.me/" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link rel="stylesheet" href="https://rsms.me/inter/inter.css" />
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap" />
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono@master/fonts/webfonts/JetBrainsMono-Regular.woff2" />
+    <!--
+      字体策略：不引用外部 CDN 字体（CSP style-src/font-src 'self' 本就拦截，且避免外部依赖）。
+      正文走系统字体栈（tailwind fontFamily 中的 Inter / Noto Sans SC / JetBrains Mono
+      仅在本机已安装时优先生效，否则回落 system-ui / ui-monospace）。
+      Lora 衬线标题字体为本地 woff2，由 src/index.css 的 @font-face 按需加载（About 页）。
+    -->
   </head>
   <body class="bg-ink text-white antialiased">
     <div id="root"></div>

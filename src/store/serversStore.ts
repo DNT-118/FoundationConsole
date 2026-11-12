@@ -2,6 +2,7 @@
 import { create } from 'zustand'
 import { api } from '@/api/platform'
 import { useAuthStore } from '@/store/authStore'
+import type { ServerMember, ServerRole } from '@/types/api'
 
 export const DEFAULT_PORT = 8081
 
@@ -24,6 +25,15 @@ export interface ServerConfig {
   controlTransport?: 'http' | 'ws'
   refetchInterval: number
   createdAt: number
+  // ===== R4：成员与权限（服务端强制）=====
+  /** 所有者（分享者）。 */
+  owner?: string
+  /** 被分享时 = 所有者用户名；自有服务器无此字段。 */
+  sharedBy?: string
+  /** 当前用户的有效角色。 */
+  role?: ServerRole
+  /** 成员列表（仅 owner/manager 收到）。 */
+  members?: ServerMember[]
 }
 
 /** 显示名：自定义标签 > 服务器返回名 > host。 */

@@ -7,8 +7,10 @@ import ConfirmDialog from '@/components/ConfirmDialog'
 import { useT } from '@/i18n'
 import { useControlSource, makeControlQueryFn } from '@/hooks/useControl'
 import { useServerQuery } from '@/hooks/useServerQuery'
+import { useServersStore } from '@/store/serversStore'
 import { dataSourceFor } from '@/api/registry'
 import { describeControlError } from '@/utils/controlHint'
+import { betaKnown, useUpstreamStore } from '@/ws/upstreamStore'
 import type { PluginInfo } from '@/types/api'
 
 interface PluginsData {
@@ -35,6 +37,10 @@ export default function Plugins() {
 
   const canRun = !!control
   const canReadRoute = !!(server && dataSourceFor(server).fetchReadOnly)
+  // 上游内测能力（hello.beta）：已知且未开启 adapted_actions 时，动作按钮替换为提示（不点了才 404）
+  const serverId = useServersStore((s) => s.activeId)
+  const upstream = useUpstreamStore((s) => (serverId ? s.byServer[serverId] : undefined))
+  const adaptedActionsBetaOff = betaKnown(upstream) && !upstream.beta.includes('adapted_actions')
 
   /** 适配插件只读路由查询（GET /plugins/<id>/<route>，平台白名单转发）；再次点击同一按钮收起。 */
   async function openRoute(pluginId: string, route: string) {
@@ -239,7 +245,14 @@ export default function Plugins() {
                       </pre>
                     )}
                     {/* [内测] 写/动作路由：POST /control/adapted/<id>/<action> */}
-                    {p.actions && p.actions.length > 0 && (
+                    {p.actions && p.actions.length > 0 && adaptedActionsBetaOff && (
+                      <div className="mt-2 border-t border-ink-border/60 pt-2">
+                        <p className="font-mono text-[8px] leading-relaxed text-scp-warn">
+                          {t('plugins.actionsBetaOff')}
+                        </p>
+                      </div>
+                    )}
+                    {p.actions && p.actions.length > 0 && !adaptedActionsBetaOff && (
                       <div className="mt-2 border-t border-ink-border/60 pt-2">
                         <div className="flex flex-wrap gap-1">
                           {p.actions.map((a) => {

@@ -24,7 +24,10 @@ const auth = require('./auth')
 const mail = require('./mail')
 const crypto = require('./crypto')
 const wsHub = require('./wsHub')
-const { isForbiddenTarget, isPrivateHost, resolveHostChecked, isAllowedControlPath, isAllowedReadOnlyPath, isSameOrigin } = require('./security')
+const playerHistory = require('./playerHistory')
+const notify = require('./notify')
+const scheduler = require('./scheduler')
+const { isForbiddenTarget, isPrivateHost, resolveHostChecked, isAllowedControlPath, isAllowedReadOnlyPath, isSameOrigin, isAllowedSteamRedirect } = require('./security')
 const { requestUpstream } = require('./upstream')
 const { serveStatic } = require('./staticFiles')
 
@@ -91,8 +94,10 @@ function validateServerInput(b) {
 /**
  * 服务器配置出参脱敏：SL token / API Key 一律不回传明文。
  * 平台内部转发使用平台存储值注入，前端只需要知道"是否已配置"。
+ * R4：附带当前用户对服务器的角色（owner/manager/operator/viewer）；
+ * owner/manager 额外拿到成员列表（用于成员管理 UI）。
  */
-function sanitizeServer(s) {
+function sanitizeServer(s, viewerRole, members) {
   return {
     id: s.id,
     host: s.host,
@@ -105,6 +110,10 @@ function sanitizeServer(s) {
     apiKeyConfigured: !!s.apiKey,
     controlEnabled: !!s.apiKey,
     createdAt: s.createdAt,
+    owner: s.owner || s.userId,
+    sharedBy: s.sharedBy || undefined,
+    role: viewerRole || s._role || 'owner',
+    members: members || undefined,
   }
 }
 
@@ -271,6 +280,8 @@ function httpGetBuffer(url, timeoutMs = 8000, maxBytes = 512 * 1024, redirects =
           r.resume()
           let next
           try { next = new URL(r.headers.location, url).toString() } catch { resolve(null); return }
+          // 重定向只允许落在 Steam 自有域（https），防止上游 30x 把代理引向任意主机
+          if (!isAllowedSteamRedirect(next)) { resolve(null); return }
           resolve(httpGetBuffer(next, timeoutMs, maxBytes, redirects - 1))
           return
         }
@@ -389,7 +400,7 @@ async function handleApi(req, res, url, method) {
     }
     if (p === '/api/auth/register' && method === 'POST') {
       const b = await readBody(req)
-      const r = auth.register(b.email, b.username, b.password, b.code)
+      const r = auth.register(b.email, b.username, b.password, b.code, b.inviteCode)
       if (r && r.token) setSessionCookie(req, res, r.token)   // 注册即登录：下发 HttpOnly cookie
       return sendJSON(res, 200, { success: true, ...r })
     }
@@ -452,6 +463,8 @@ async function handleApi(req, res, url, method) {
         success: true,
         firstRun: !hasUsers,
         smtpConfigured: !!store.getSmtpConfig(),
+        // R4 定位（内部部署）：open 自助注册 / closed 关闭 / invite 邀请制
+        registrationMode: store.getRegistrationMode(),
       })
     }
     if (p === '/api/me' && method === 'GET') {
@@ -519,15 +532,17 @@ async function handleApi(req, res, url, method) {
     }
 
     // ---- SL 数据/控制（替代旧 /api/sl/proxy）----
-    // 只接受 serverId（当前用户已注册的服务器），目标 URL/token 全部来自平台存储，
-    // 浏览器无法指定任意地址 —— SSRF 面收敛为"仅本人服务器"。
+    // 只接受 serverId（当前用户已注册或被分享的服务器），目标 URL/token 全部来自平台存储，
+    // 浏览器无法指定任意地址 —— SSRF 面收敛为"仅可访问服务器"。
     // 数据读取：平台内部自动请求游戏服务器（DNS 校验 + 已校验 IP + 存储 token 注入）。
+    // 权限：viewer+ 可读；owner/operator/manager 可控制（visitor 见成员角色，平台 guest 仍全禁）。
     if (p === '/api/sl/data' && method === 'GET') {
       const user = currentUser(req)
       if (!user) return sendJSON(res, 401, { success: false, message: '未登录' })
       const id = String(url.searchParams.get('serverId') || '')
       const server = store.listServers(user.username).find((s) => s.id === id)
       if (!server) return sendJSON(res, 404, { success: false, message: '服务器不存在' })
+      if (user.role === 'guest') return sendJSON(res, 403, { success: false, message: '访客不可读取服务器数据' })
       // SLDataAPI v2.5.5：只读 GET 路径白名单（verify_token 通道）。
       // /plugins/adapted 适配插件发现；/plugins/<id>/<route> 适配插件只读子路径。
       const path = String(url.searchParams.get('path') || '/get_sl_data')
@@ -557,6 +572,11 @@ async function handleApi(req, res, url, method) {
       const server = store.listServers(user.username).find((s) => s.id === id)
       if (!server) return sendJSON(res, 404, { success: false, message: '服务器不存在' })
       if (user.role === 'guest') return sendJSON(res, 403, { success: false, message: '访客不可执行控制操作' })
+      // 成员角色强制：viewer（只看数据）不可调用控制端点
+      const role = store.accessRole(user.username, id)
+      if (!role || role === 'viewer') {
+        return sendJSON(res, 403, { success: false, message: '当前成员角色为「只看数据」，无控制权限' })
+      }
       const r = await wsHub.callForServer(server, path, b.body)
       const status = r.status && r.status >= 200 && r.status < 300 ? 200 : (r.status || 502)
       const bodyObj = r.data ?? { success: false, message: r.message || '上游错误' }
@@ -570,7 +590,17 @@ async function handleApi(req, res, url, method) {
       const user = currentUser(req)
       if (!user) return sendJSON(res, 401, { success: false, message: '未登录' })
       // 凭据打码：token/API Key 不回传明文（代理层使用平台存储值，前端无需持有）
-      return sendJSON(res, 200, { success: true, servers: store.listServers(user.username).map(sanitizeServer) })
+      return sendJSON(res, 200, {
+        success: true,
+        servers: store.listServers(user.username).map((s) => {
+          const role = s._role || 'owner'
+          // owner/manager 附带成员列表（成员管理 UI 用）
+          const members = role === 'owner' || role === 'manager'
+            ? store.listMembers(s.id, user.username).members ?? []
+            : undefined
+          return sanitizeServer(s, role, members)
+        }),
+      })
     }
     if (p === '/api/servers' && method === 'POST') {
       const user = currentUser(req)
@@ -592,11 +622,15 @@ async function handleApi(req, res, url, method) {
       const s = store.addServer(user.username, { ...b, apiKey })
       return sendJSON(res, 200, { success: true, server: sanitizeServer(s) })
     }
-    if (p.startsWith('/api/servers/') && method === 'PUT') {
+    if (p.startsWith('/api/servers/') && method === 'PUT' && !p.includes('/members/')) {
       const user = currentUser(req)
       if (!user) return sendJSON(res, 401, { success: false, message: '未登录' })
       const id = p.slice('/api/servers/'.length)
       const b = await readBody(req)
+      // 只有所有者能改服务器配置（凭据不可泄露给被分享用户）
+      if (store.accessRole(user.username, id) !== 'owner') {
+        return sendJSON(res, 403, { success: false, message: '仅服务器所有者可修改配置' })
+      }
       const verr = validateServerInput(b)
       if (verr) return sendJSON(res, 400, { success: false, message: verr })
       const hostCheck = await resolveHostChecked(b.host, (user.role ?? 'guest') === 'admin')
@@ -614,14 +648,176 @@ async function handleApi(req, res, url, method) {
       if (!s) return sendJSON(res, 404, { success: false, message: '服务器不存在' })
       return sendJSON(res, 200, { success: true, server: sanitizeServer(s) })
     }
-    if (p.startsWith('/api/servers/') && method === 'DELETE') {
+    if (p.startsWith('/api/servers/') && method === 'DELETE' && !p.includes('/members/')) {
       const user = currentUser(req)
       if (!user) return sendJSON(res, 401, { success: false, message: '未登录' })
       const id = p.slice('/api/servers/'.length)
+      if (store.accessRole(user.username, id) !== 'owner') {
+        return sendJSON(res, 403, { success: false, message: '仅服务器所有者可删除' })
+      }
       if (!store.removeServer(user.username, id)) {
         return sendJSON(res, 404, { success: false, message: '服务器不存在' })
       }
       wsHub.invalidateServer(id)
+      return sendJSON(res, 200, { success: true })
+    }
+
+    // ---- 服务器成员与权限（R4）：owner/manager 管理成员；角色决定数据/控制权限 ----
+    if (p === '/api/servers/members' && method === 'GET') {
+      const user = currentUser(req)
+      if (!user) return sendJSON(res, 401, { success: false, message: '未登录' })
+      const serverId = String(url.searchParams.get('serverId') || '')
+      const r = store.listMembers(serverId, user.username)
+      if (!r.ok) return sendJSON(res, 403, { success: false, message: r.error })
+      return sendJSON(res, 200, { success: true, members: r.members, role: store.accessRole(user.username, serverId) })
+    }
+    if (p.startsWith('/api/servers/') && p.endsWith('/members') && method === 'POST') {
+      const user = currentUser(req)
+      if (!user) return sendJSON(res, 401, { success: false, message: '未登录' })
+      const serverId = p.slice('/api/servers/'.length, -('/members'.length))
+      const b = await readBody(req)
+      const target = store.getUser(String(b.username || '').trim())
+      if (!target) return sendJSON(res, 400, { success: false, message: '目标用户不存在' })
+      const r = store.setMember(serverId, user.username, target.username, String(b.role || ''))
+      if (!r.ok) return sendJSON(res, 400, { success: false, message: r.error })
+      return sendJSON(res, 200, { success: true, members: r.members })
+    }
+    {
+      const m = p.match(/^\/api\/servers\/([^/]+)\/members\/([^/]+)$/)
+      if (m && (method === 'DELETE' || method === 'PUT')) {
+        const user = currentUser(req)
+        if (!user) return sendJSON(res, 401, { success: false, message: '未登录' })
+        const [, serverId, target] = m
+        const r = method === 'DELETE'
+          ? store.removeMember(serverId, user.username, target)
+          : store.setMember(serverId, user.username, target, String((await readBody(req)).role || ''))
+        if (!r.ok) return sendJSON(res, 400, { success: false, message: r.error })
+        return sendJSON(res, 200, { success: true, members: r.members })
+      }
+    }
+
+    // ---- 通知规则与通知中心（R4）----
+    if (p === '/api/notifications/rules' && method === 'GET') {
+      const user = currentUser(req)
+      if (!user) return sendJSON(res, 401, { success: false, message: '未登录' })
+      return sendJSON(res, 200, { success: true, rules: store.listNotifyRules(user.username), events: store.NOTIFY_EVENTS })
+    }
+    if (p === '/api/notifications/rules' && method === 'POST') {
+      const user = currentUser(req)
+      if (!user) return sendJSON(res, 401, { success: false, message: '未登录' })
+      if (user.role === 'guest') return sendJSON(res, 403, { success: false, message: '访客不可配置通知' })
+      try {
+        const b = await readBody(req)
+        // 邮件通道仅管理员：非管理员的 email 标志一律忽略
+        const rule = store.addNotifyRule(user.username, { ...b, email: user.role === 'admin' ? b.email === true : false })
+        return sendJSON(res, 200, { success: true, rule })
+      } catch (e) {
+        return sendJSON(res, 400, { success: false, message: e.message })
+      }
+    }
+    {
+      const m = p.match(/^\/api\/notifications\/rules\/([^/]+)$/)
+      if (m && (method === 'PUT' || method === 'DELETE')) {
+        const user = currentUser(req)
+        if (!user) return sendJSON(res, 401, { success: false, message: '未登录' })
+        try {
+          if (method === 'DELETE') {
+            const ok = store.removeNotifyRule(user.username, m[1])
+            return sendJSON(res, ok ? 200 : 404, ok ? { success: true } : { success: false, message: '规则不存在' })
+          }
+          const patchBody = await readBody(req)
+          const rule = store.updateNotifyRule(user.username, m[1], { ...patchBody, email: user.role === 'admin' ? patchBody.email : undefined })
+          return sendJSON(res, rule ? 200 : 404, rule ? { success: true, rule } : { success: false, message: '规则不存在' })
+        } catch (e) {
+          return sendJSON(res, 400, { success: false, message: e.message })
+        }
+      }
+    }
+    if (p === '/api/notifications' && method === 'GET') {
+      const user = currentUser(req)
+      if (!user) return sendJSON(res, 401, { success: false, message: '未登录' })
+      return sendJSON(res, 200, { success: true, items: store.listNotifications(user.username) })
+    }
+    if (p === '/api/notifications/read' && method === 'POST') {
+      const user = currentUser(req)
+      if (!user) return sendJSON(res, 401, { success: false, message: '未登录' })
+      const b = await readBody(req)
+      store.markNotificationsRead(user.username, Array.isArray(b.ids) ? b.ids : null)
+      return sendJSON(res, 200, { success: true })
+    }
+    if (p === '/api/notifications' && method === 'DELETE') {
+      const user = currentUser(req)
+      if (!user) return sendJSON(res, 401, { success: false, message: '未登录' })
+      store.clearNotifications(user.username)
+      return sendJSON(res, 200, { success: true })
+    }
+
+    // ---- 定时任务（R4）：创建/修改/删除需 owner/manager；列表按可访问服务器过滤 ----
+    if (p === '/api/schedules' && method === 'GET') {
+      const user = currentUser(req)
+      if (!user) return sendJSON(res, 401, { success: false, message: '未登录' })
+      return sendJSON(res, 200, { success: true, schedules: store.listSchedules(user.username) })
+    }
+    if (p === '/api/schedules' && method === 'POST') {
+      const user = currentUser(req)
+      if (!user) return sendJSON(res, 401, { success: false, message: '未登录' })
+      if (user.role === 'guest') return sendJSON(res, 403, { success: false, message: '访客不可创建定时任务' })
+      try {
+        const b = await readBody(req)
+        const s = store.addSchedule(user.username, String(b.serverId || ''), b)
+        return sendJSON(res, 200, { success: true, schedule: s })
+      } catch (e) {
+        return sendJSON(res, 400, { success: false, message: e.message })
+      }
+    }
+    {
+      const m = p.match(/^\/api\/schedules\/([^/]+)$/)
+      if (m) {
+        const user = currentUser(req)
+        if (!user) return sendJSON(res, 401, { success: false, message: '未登录' })
+        try {
+          if (method === 'PUT') {
+            const s = store.updateSchedule(user.username, m[1], await readBody(req))
+            return sendJSON(res, s ? 200 : 404, s ? { success: true, schedule: s } : { success: false, message: '任务不存在' })
+          }
+          if (method === 'DELETE') {
+            const ok = store.removeSchedule(user.username, m[1])
+            return sendJSON(res, ok ? 200 : 404, ok ? { success: true } : { success: false, message: '任务不存在' })
+          }
+        } catch (e) {
+          return sendJSON(res, 400, { success: false, message: e.message })
+        }
+      }
+    }
+
+    // ---- 玩家历史（R4）：viewer+ 可查；保留天数/清除仅管理员 ----
+    if (p === '/api/servers/history' && method === 'GET') {
+      const user = currentUser(req)
+      if (!user) return sendJSON(res, 401, { success: false, message: '未登录' })
+      const serverId = String(url.searchParams.get('serverId') || '')
+      if (!store.accessRole(user.username, serverId)) {
+        return sendJSON(res, 404, { success: false, message: '服务器不存在' })
+      }
+      const days = Number(url.searchParams.get('days')) || undefined
+      return sendJSON(res, 200, { success: true, history: playerHistory.history(serverId, days) })
+    }
+    if (p === '/api/admin/history' && method === 'GET' || p === '/api/admin/history' && method === 'PUT') {
+      const user = currentUser(req)
+      if (!user) return sendJSON(res, 401, { success: false, message: '未登录' })
+      if (user.role !== 'admin') return sendJSON(res, 403, { success: false, message: '仅管理员可配置玩家历史' })
+      if (method === 'GET') {
+        return sendJSON(res, 200, { success: true, days: store.getPlayerHistoryDays() })
+      }
+      const b = await readBody(req)
+      const days = store.setPlayerHistoryDays(b.days)
+      return sendJSON(res, 200, { success: true, days })
+    }
+    if (p === '/api/admin/history/clear' && method === 'POST') {
+      const user = currentUser(req)
+      if (!user) return sendJSON(res, 401, { success: false, message: '未登录' })
+      if (user.role !== 'admin') return sendJSON(res, 403, { success: false, message: '仅管理员可清除玩家历史' })
+      const b = await readBody(req)
+      playerHistory.clear(String(b.serverId || '') || undefined)
       return sendJSON(res, 200, { success: true })
     }
 
@@ -831,6 +1027,43 @@ async function handleApi(req, res, url, method) {
         return sendJSON(res, 200, { success: true })
       }
     }
+    // ---- 注册模式与邀请码（R4 定位：私有内部部署；仅管理员）----
+    if (p === '/api/admin/registration' && method === 'GET') {
+      const user = currentUser(req)
+      auth.requireAdmin(user)
+      return sendJSON(res, 200, { success: true, mode: store.getRegistrationMode(), invites: store.listInvites() })
+    }
+    if (p === '/api/admin/registration' && method === 'PUT') {
+      const user = currentUser(req)
+      auth.requireAdmin(user)
+      const b = await readBody(req)
+      try {
+        const mode = store.setRegistrationMode(String(b.mode || ''))
+        return sendJSON(res, 200, { success: true, mode })
+      } catch (e) {
+        return sendJSON(res, 400, { success: false, message: e.message })
+      }
+    }
+    if (p === '/api/admin/registration/invites' && method === 'POST') {
+      const user = currentUser(req)
+      auth.requireAdmin(user)
+      try {
+        const invite = store.createInvite(user.username)
+        // 明文邀请码只在创建响应中出现一次
+        return sendJSON(res, 200, { success: true, invite })
+      } catch (e) {
+        return sendJSON(res, 400, { success: false, message: e.message })
+      }
+    }
+    {
+      const m = p.match(/^\/api\/admin\/registration\/invites\/([^/]+)$/)
+      if (m && method === 'DELETE') {
+        const user = currentUser(req)
+        auth.requireAdmin(user)
+        const ok = store.revokeInvite(m[1])
+        return sendJSON(res, ok ? 200 : 404, ok ? { success: true } : { success: false, message: '邀请码不存在或已使用' })
+      }
+    }
     if (p === '/api/admin/steam' && method === 'GET') {
       const user = currentUser(req)
       auth.requireAdmin(user)
@@ -1029,6 +1262,10 @@ async function handleVoiceUpgrade(req, socket, head) {
     const apiKey = match.apiKey || ''
     if (!apiKey) return deny(403, 'proxy: 该服务器未配置 API Key'), true
 
+    // R4 成员角色强制：语音监听属于值班操作 → operator+
+    const memberRole = store.accessRole(user.username, match.id)
+    if (!memberRole || memberRole === 'viewer') return deny(403, 'proxy: 当前成员角色为「只看数据」，无语音监听权限'), true
+
     // 5. 语音端口：优先目标服务器注册时配置（默认 8082）
     const voicePort = Number(parsed.searchParams.get('voice_port') || 8082)
     if (!Number.isInteger(voicePort) || voicePort < 1 || voicePort > 65535) return deny(400, '语音端口无效'), true
@@ -1172,10 +1409,49 @@ wsHub.init({
   resolveUser: wsResolveUser,
   listServers: (username) => store.listServers(username),
   findServer: (id) => store.findServerById(id),
-  isOwned: (username, id) => store.listServers(username).some((s) => s.id === id),
+  isOwned: (username, id) => store.accessRole(username, id) !== null,
+  accessRole: (username, id) => store.accessRole(username, id),
   fetchHttp: wsFetchHttp,
   resolveServerHost,
+  // R4：玩家历史差分（每次成功轮询）
+  onPollData: (serverId, data) => {
+    try { playerHistory.observe(serverId, data) } catch { /* 历史记录失败不影响推送 */ }
+  },
+  // R4：上游事件 → 通知规则评估
+  onUpstreamEvent: (serverId, event, data) => notify.handleEvent(serverId, event, data),
 })
+
+// R4：通知系统（邮件经已配置的 SMTP；仅管理员规则可用邮件通道）
+notify.init({
+  accessRole: (username, serverId) => store.accessRole(username, serverId),
+  isPlatformAdmin: (username) => store.getUser(username)?.role === 'admin',
+  sendEmail: async ({ to, serverId, event, text }) => {
+    const smtp = await smtpForSend()
+    // 直接用 nodemailer 发一封简短通知（与验证码同通道、同限流基线）
+    const { createTransporter, buildSender } = require('./mail')
+    const transporter = createTransporter(smtp)
+    const { from, envelopeFrom } = buildSender(smtp)
+    await transporter.sendMail({
+      from,
+      envelope: { from: envelopeFrom, to: [to] },
+      to,
+      // Subject 白名单化：上游事件名不可信（防邮件头注入）
+      subject: `[基金会控制台] ${notify.safeEventName(event)} 通知`,
+      text: `服务器 ${serverId}\n事件：${event}\n${text}\n\n（由你配置的通知规则触发；可在通知中心调整）`,
+    })
+  },
+})
+
+// R4：定时任务调度器（执行走 WS/HTTP 协商中继，注入 API Key；服务重启后按 lastRunAt 恢复）
+scheduler.init({
+  executor: async (serverId, path, body) => {
+    const server = store.findServerById(serverId)
+    if (!server) return { ok: false, message: '服务器不存在（可能已被删除）' }
+    const r = await wsHub.callForServer(server, path, body)
+    return { ok: r.ok === true, message: r.message || (r.ok ? 'ok' : `HTTP ${r.status}`) }
+  },
+})
+scheduler.start()
 
 let shuttingDown = false
 function shutdown() {

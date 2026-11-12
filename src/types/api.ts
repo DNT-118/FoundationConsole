@@ -309,6 +309,141 @@ export interface MapLayout {
   lightShift?: { dx: number; dz: number }
 }
 
+/** /control/player/data —— 玩家档案（只读；字段读取失败时为 null，未实现字段缺省）。 */
+export interface PlayerProfileData {
+  nickname: string
+  userid: string
+  player_id: number
+  role: string
+  health: number
+  position?: { x: number; y: number; z: number }
+  room: string
+  effects?: unknown[]
+  temporary_bypass?: unknown
+  effect_door_permissions?: string
+  max_health?: number | null
+  artificial_health?: number | null
+  max_artificial_health?: number | null
+  hume_shield?: number | null
+  max_hume_shield?: number | null
+  stamina?: number | null
+  items?: { type: string; serial: number }[] | null
+  ammo?: Record<string, number> | null
+  group?: string | null
+  godmode?: boolean | null
+  noclip?: boolean | null
+  bypass?: boolean | null
+  overwatch?: boolean | null
+  spectating?: { nickname: string; userid: string; player_id: number } | null
+  zone?: string | null
+  is_speaking?: boolean | null
+  is_muted?: boolean | null
+  is_intercom_muted?: boolean | null
+  voice_channel?: string | null
+  is_dummy?: boolean | null
+}
+
+/** /control/files/stat（[内测] beta_file_root_ws）。 */
+export interface FileStatResult {
+  path: string
+  type: 'dir' | 'file'
+  size: number
+  modified: string
+  protected?: boolean
+  sha256?: string | null
+  max_read_bytes?: number
+  max_write_bytes?: number
+  max_chunk_bytes?: number
+}
+
+/** /control/files/read_chunk —— data 为 base64；offset=0 时附带整文件 sha256。 */
+export interface FileReadChunkResult {
+  path: string
+  size: number
+  offset: number
+  length: number
+  next_offset: number
+  eof: boolean
+  data: string
+  sha256?: string | null
+}
+
+/** /control/files/write_chunk（append 非终块 / 终块提交 / abort）。 */
+export interface FileWriteChunkResult {
+  upload_id?: string
+  received?: number
+  committed?: boolean
+  file?: { path: string; bytes: number; sha256: string }
+  aborted?: boolean
+}
+
+// ================= R4：成员 / 通知 / 定时任务 / 玩家历史 =================
+
+/** 当前用户对某服务器的角色（owner 恒最高；manager 管成员与任务；operator 值班；viewer 只看数据）。 */
+export type ServerRole = 'owner' | 'manager' | 'operator' | 'viewer'
+/** 可分配的成员角色（不含 owner）。 */
+export type ServerMemberRole = Exclude<ServerRole, 'owner'>
+
+export interface ServerMember {
+  username: string
+  role: ServerMemberRole
+}
+
+/** 通知规则（基于控制 WS 事件）。 */
+export interface NotificationRule {
+  id: string
+  username: string
+  /** '*' = 全部可访问服务器 */
+  serverId: string
+  events: string[]
+  inapp: boolean
+  /** 仅管理员可用（经已配置的 SMTP 发送）。 */
+  email: boolean
+  /** 同规则同事件的最小间隔（秒）。 */
+  minIntervalSeconds: number
+  enabled: boolean
+  createdAt: number
+}
+
+export interface NotificationItem {
+  id: string
+  username: string
+  serverId: string
+  event: string
+  text: string
+  utc: string
+  read: boolean
+}
+
+/** 定时任务（只允许 SLDataAPI 已有控制端点：broadcast / cassie / console）。 */
+export interface ScheduleTask {
+  id: string
+  serverId: string
+  username: string
+  kind: 'broadcast' | 'cassie' | 'console'
+  payload: Record<string, unknown>
+  intervalSeconds: number
+  enabled: boolean
+  createdAt: number
+  lastRunAt: number
+  lastStatus: '' | 'ok' | 'fail'
+  runs: { utc: string; ok: boolean; message: string }[]
+}
+
+export interface PlayerHistoryData {
+  days: number
+  users: {
+    userid: string
+    nickname: string
+    sessions: number
+    totalSeconds: number
+    firstSeen: number
+    lastSeen: number
+    online: boolean
+  }[]
+  trend: { t: number; online: number }[]
+}
+
 // ================= SLDataAPI 2.6.x 新增端点数据 =================
 
 /** /control/dummies 单个假人（spawn/list/remove 共用）。 */

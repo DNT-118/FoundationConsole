@@ -17,6 +17,7 @@ function client() {
     'zustand': { create: () => init => { let state; const set = patch => Object.assign(state, patch); state = init(set); return store(state) } },
     '@/store/authStore': { useAuthStore: store({ session: { username: 'test' } }) },
     '@/ws/stateStore': { useWsStateStore: empty }, '@/ws/eventsStore': { useWsEventsStore: empty }, '@/api/request': { ApiError },
+    '@/ws/upstreamStore': { useUpstreamStore: empty },
   }
   class Socket {
     sent = []

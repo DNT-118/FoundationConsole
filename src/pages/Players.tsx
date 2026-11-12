@@ -5,9 +5,12 @@ import {
   type ColumnDef, type SortingState,
 } from '@tanstack/react-table'
 import { useQueryClient } from '@tanstack/react-query'
-import { Search, Ban, VolumeX, LogOut, MessageSquare, Loader2 } from 'lucide-react'
+import { Search, Ban, VolumeX, LogOut, MessageSquare, Loader2, Info } from 'lucide-react'
 import PageStub from '@/components/PageStub'
 import ConfirmDialog from '@/components/ConfirmDialog'
+import PlayerProfile from '@/components/PlayerProfile'
+import PlayerHistory from '@/components/PlayerHistory'
+import { useServersStore } from '@/store/serversStore'
 import { useServerQuery } from '@/hooks/useServerQuery'
 import { useSteamId } from '@/services/steam'
 import { useT } from '@/i18n'
@@ -41,6 +44,9 @@ export default function Players() {
   const players = data?.players ?? []
   const [global, setGlobal] = useState('')
   const [sorting, setSorting] = useState<SortingState>([])
+  // R4：在线列表 / 玩家历史两个视图
+  const [view, setView] = useState<'online' | 'history'>('online')
+  const activeId = useServersStore((s) => s.activeId)
 
   const columns = useMemo<ColumnDef<Player>[]>(
     () => [
@@ -65,11 +71,27 @@ export default function Players() {
   return (
     <PageStub code="M-04" title={t('nav.players')}>
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <span className="font-mono text-[11px] uppercase tracking-wider text-ink-mute">
-            {players.length} {t('players.online')}
-          </span>
-          <div className="flex items-center gap-2 border border-ink-border bg-ink-deep px-2 py-1">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-1">
+            {([['online', t('players.tabOnline')], ['history', t('players.tabHistory')]] as const).map(([v, label]) => (
+              <button
+                key={v}
+                onClick={() => setView(v)}
+                aria-pressed={view === v}
+                className={`border px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider transition-colors ${
+                  view === v ? 'border-inverse bg-inverse text-ink' : 'border-ink-border text-ink-mute hover:border-inverse hover:text-foreground'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {view === 'online' && (
+            <span className="font-mono text-[11px] uppercase tracking-wider text-ink-mute">
+              {players.length} {t('players.online')}
+            </span>
+          )}
+          <div className={`flex items-center gap-2 border border-ink-border bg-ink-deep px-2 py-1 ${view === 'online' ? '' : 'hidden'}`}>
             <Search size={12} className="text-ink-mute" />
             <input
               value={global}
@@ -80,7 +102,14 @@ export default function Players() {
           </div>
         </div>
 
-        {players.length === 0 ? (
+        {view === 'history' && activeId && <PlayerHistory serverId={activeId} />}
+        {view === 'history' && !activeId && (
+          <div className="border border-dashed border-ink-border px-4 py-16 text-center font-mono text-[12px] text-ink-mute">
+            // {t('dash.noServer')}
+          </div>
+        )}
+
+        {view === 'online' && (players.length === 0 ? (
           <div className="border border-dashed border-ink-border px-4 py-16 text-center font-mono text-[12px] text-ink-mute">
             // {t('players.empty')}
           </div>
@@ -90,7 +119,7 @@ export default function Players() {
               <PlayerCard key={row.id} player={row.original} t={t} />
             ))}
           </div>
-        )}
+        ))}
       </div>
     </PageStub>
   )
@@ -106,6 +135,7 @@ function PlayerCard({ player, t }: { player: Player; t: ReturnType<typeof useT> 
   const [avatarBroken, setAvatarBroken] = useState(false)
   // 头像地址变化（刷新/换人）时重置回退状态
   useEffect(() => { setAvatarBroken(false) }, [steam?.avatar])
+  const [profileOpen, setProfileOpen] = useState(false)
   const [action, setAction] = useState<ActKind | null>(null)
   const [reason, setReason] = useState('')
   const [duration, setDuration] = useState(60)
@@ -146,20 +176,35 @@ function PlayerCard({ player, t }: { player: Player; t: ReturnType<typeof useT> 
             {t(teamKey[player.team])}
           </div>
         </div>
-        {steam?.avatar && !avatarBroken ? (
-          <img
-            src={steam.avatar}
-            alt={player.nickname}
-            loading="lazy"
-            onError={() => setAvatarBroken(true)}
-            className="h-8 w-8 shrink-0 border border-ink-border object-cover"
-          />
-        ) : (
-          <div className="grid h-8 w-8 shrink-0 place-items-center border border-ink-border bg-ink font-mono text-[11px] text-ink-mute">
-            {player.nickname.slice(0, 2).toUpperCase()}
-          </div>
-        )}
+        <div className="flex items-start gap-2">
+          <button
+            onClick={() => setProfileOpen(true)}
+            disabled={!canRun}
+            aria-label={`${t('profile.title')} · ${player.nickname}`}
+            title={t('profile.title')}
+            className="shrink-0 border border-ink-border p-1.5 text-ink-mute transition-colors hover:border-inverse hover:text-foreground disabled:opacity-40"
+          >
+            <Info size={13} />
+          </button>
+          {steam?.avatar && !avatarBroken ? (
+            <img
+              src={steam.avatar}
+              alt={player.nickname}
+              loading="lazy"
+              onError={() => setAvatarBroken(true)}
+              className="h-8 w-8 shrink-0 border border-ink-border object-cover"
+            />
+          ) : (
+            <div className="grid h-8 w-8 shrink-0 place-items-center border border-ink-border bg-ink font-mono text-[11px] text-ink-mute">
+              {player.nickname.slice(0, 2).toUpperCase()}
+            </div>
+          )}
+        </div>
       </div>
+
+      {profileOpen && (
+        <PlayerProfile target={player.nickname} onClose={() => setProfileOpen(false)} />
+      )}
 
       <dl className="mt-3 space-y-1 font-mono text-[11px]">
         <Row k={t('players.role')} v={player.role} />

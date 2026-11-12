@@ -1,6 +1,6 @@
 /* Foundation Console — Copyright 2026 DNT_OF / DNTOF · SPDX-License-Identifier: Apache-2.0 */
 import { Activity, Users, Cpu, Database, Server, Clock, ShieldAlert } from 'lucide-react'
-import { Suspense, lazy, useState } from 'react'
+import { Suspense, lazy, useEffect, useState } from 'react'
 import PageStub from '@/components/PageStub'
 import { useServerQuery } from '@/hooks/useServerQuery'
 import { useServersOverview } from '@/hooks/useServersOverview'
@@ -10,6 +10,7 @@ import { nukeText, phaseText } from '@/utils/serverDisplay'
 import { holidayLabel } from '@/utils/controlHint'
 import { useT } from '@/i18n'
 import { useThemeStore } from '@/store/themeStore'
+import { betaKnown, useUpstreamStore } from '@/ws/upstreamStore'
 import type { TKey } from '@/i18n/dict'
 import type { FoundationStatus } from '@/types/api'
 import type { ReactNode } from 'react'
@@ -32,6 +33,14 @@ export default function Dashboard() {
   const status = deriveFleetStatus(overview)
   const meta = statusMeta[status]
   const theme = useThemeStore((s) => s.theme)
+  // 上游 hello 能力信息（WS 控制通道连接的服务器）
+  const upstream = useUpstreamStore((s) => (activeId ? s.byServer[activeId] : undefined))
+  // 总览健康点的"现在"（每 30s 重渲染一次驱动陈旧判定）
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 30_000)
+    return () => clearInterval(timer)
+  }, [])
 
   return (
     <PageStub code="M-01" title={t('nav.dashboard')} action={<button className="border border-ink-border px-3 py-1 text-xs text-ink-mute" aria-pressed={showScene} onClick={() => setShowScene(v => !v)}>3D {showScene ? 'ON' : 'OFF'}</button>}>
@@ -82,7 +91,25 @@ export default function Dashboard() {
               {/* SLDataAPI 2.6.x：game_version / active_holiday（旧版本服务端缺省时显示 —） */}
               <Row k={t('dash.gameVersion')} v={data?.gameVersion || '—'} />
               <Row k={t('dash.activeHoliday')} v={data ? holidayLabel(data.activeHoliday, t) : '—'} />
+              {/* 上游 hello 能力信息（仅 WS 控制通道可用时已知） */}
+              <Row k={t('dash.upstreamVersion')} v={betaKnown(upstream) && upstream.version ? upstream.version : '—'} />
+              <Row k={t('dash.upstreamTls')} v={betaKnown(upstream) ? (upstream.tls ? t('dash.tlsOn') : t('dash.tlsOff')) : t('dash.tlsUnknown')} />
+              {betaKnown(upstream) && upstream.certFingerprint && (
+                <Row k={t('dash.tlsFingerprint')} v={upstream.certFingerprint} mono title={upstream.certFingerprint} />
+              )}
             </div>
+            {betaKnown(upstream) && (
+              <div className="mt-2 flex flex-wrap items-center gap-1 font-mono text-[9px]">
+                <span className="text-ink-mute">{t('dash.betaCaps')}:</span>
+                {upstream.beta.length === 0 ? (
+                  <span className="text-ink-mute">—</span>
+                ) : (
+                  upstream.beta.map((b) => (
+                    <span key={b} className="border border-scp-warn/50 px-1 py-0.5 text-scp-warn">{b}</span>
+                  ))
+                )}
+              </div>
+            )}
           </Card>
 
           {servers.length > 0 && (
@@ -123,15 +150,29 @@ export default function Dashboard() {
                           <span className="text-scp-err">{t('dash.serverUnreachable')}</span>
                         ) : (
                           <>
-                            <span className={d?.online ? 'text-scp-safe' : 'text-scp-err'}>
-                              {d ? (d.online ? t('common.online') : t('common.offline')) : '…'}
+                            <span className="flex items-center gap-1.5">
+                              {/* 健康点：数据新鲜（≤2×轮询间隔）绿色，陈旧黄色，离线红 */}
+                              <span
+                                className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                                  !d || !d.online ? 'bg-scp-err' : q.isFetching || now - d.fetchedAt < 30000 ? 'bg-scp-safe' : 'bg-scp-warn'
+                                }`}
+                                title={d ? new Date(d.fetchedAt).toLocaleTimeString() : undefined}
+                              />
+                              <span className={d?.online ? 'text-scp-safe' : 'text-scp-err'}>
+                                {d ? (d.online ? t('common.online') : t('common.offline')) : '…'}
+                              </span>
+                              <span className="mx-1.5 text-ink-border">|</span>
+                              {t('dash.players')} {d ? `${d.playersCount}/${d.maxPlayers}` : '—'}
+                              <span className="mx-1.5 text-ink-border">|</span>
+                              {phaseText(d, t)}
                             </span>
-                            <span className="mx-2 text-ink-border">|</span>
-                            {t('dash.players')} {d ? `${d.playersCount}/${d.maxPlayers}` : '—'}
-                            <span className="mx-2 text-ink-border">|</span>
-                            {t('dash.round')} {d ? `${d.roundDuration}s` : '—'}
-                            <span className="mx-2 text-ink-border">|</span>
-                            {t('dash.nuke')} {nukeText(d, t)}
+                            <span className="block">
+                              {t('dash.round')} {d ? `${d.roundDuration}s` : '—'}
+                              <span className="mx-2 text-ink-border">|</span>
+                              {t('dash.nuke')} {nukeText(d, t)}
+                              <span className="mx-2 text-ink-border">|</span>
+                              <span title={t('dash.tpsUnavailable')}>TPS —</span>
+                            </span>
                           </>
                         )}
                       </div>
@@ -183,11 +224,11 @@ function TeamStat({ label, value }: { label: string; value?: number }) {
   )
 }
 
-function Row({ k, v }: { k: string; v: string }) {
+function Row({ k, v, title, mono }: { k: string; v: string; title?: string; mono?: boolean }) {
   return (
-    <div className="flex justify-between border-b border-ink-border pb-1">
-      <span>{k}</span>
-      <span className="text-foreground">{v}</span>
+    <div className="flex justify-between gap-2 border-b border-ink-border pb-1">
+      <span className="shrink-0">{k}</span>
+      <span className={`break-all text-right text-foreground ${mono ? 'font-mono' : ''}`} title={title}>{v}</span>
     </div>
   )
 }

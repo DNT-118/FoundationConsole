@@ -143,6 +143,7 @@ export default function Sidebar() {
               navigate('/login', { replace: true })
             }}
             className="flex w-full items-center gap-2 px-4 py-2.5 text-ink-mute transition-colors hover:text-scp-err"
+            aria-label={t('nav.signOut')}
           >
             <LogOut size={14} />
             {expanded && (
@@ -155,6 +156,7 @@ export default function Sidebar() {
           <button
             onClick={() => (isMobile ? setOpen((o) => !o) : setCollapsed((c) => !c))}
             className="flex w-full items-center justify-center gap-2 py-2.5 text-ink-mute transition-colors hover:text-foreground"
+            aria-label={isMobile ? t('nav.collapse') : t('nav.collapse')}
           >
             {isMobile ? (
               open ? <ChevronLeft size={14} /> : <Menu size={14} />

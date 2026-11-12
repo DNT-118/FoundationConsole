@@ -98,8 +98,14 @@ async function sendCode(email, ip, resolveSmtp) {
   return { ok: true }
 }
 
-/** 注册（首个账户免验证码：避免 SMTP 未配置时死锁；后续注册必须 QQ 邮箱验证码）。 */
-function register(email, username, password, code) {
+/**
+ * 注册（首个账户免验证码：避免 SMTP 未配置时死锁；后续注册必须 QQ 邮箱验证码）。
+ * R4 定位（私有内部部署）三种注册模式（store.getRegistrationMode）：
+ *  - open（默认）：QQ 邮箱自助注册，逻辑不变；
+ *  - closed：关闭自助注册（仅首账户引导与已有账号登录）；
+ *  - invite：邀请制——自助注册需管理员签发的一次性邀请码，QQ 邮箱与验证码要求不变。
+ */
+function register(email, username, password, code, inviteCode) {
   email = String(email || '').trim().toLowerCase()
   username = String(username || '').trim()
   if (!QQ_RE.test(email)) throw new Error('仅支持 QQ 邮箱（@qq.com）注册')
@@ -109,9 +115,25 @@ function register(email, username, password, code) {
   // 出现"抢先注册即得管理员"（防审计报告问题 5）
   const isFirst = Object.keys(store.getUsers()).length === 0 && !store.isAdminBootstrapped()
   if (!isFirst) {
-    // 非首次：必须通过邮箱验证码（防垃圾注册）
+    const mode = store.getRegistrationMode()
+    if (mode === 'closed') {
+      throw new Error('自助注册已关闭 — 本平台为内部部署，请联系管理员开通账户')
+    }
+    let invitePending = false
+    if (mode === 'invite') {
+      // 只校验不消费：验证码失败时不白烧邀请码
+      if (!store.validateInvite(inviteCode)) {
+        throw new Error('邀请码无效或已被使用 — 请向管理员索取')
+      }
+      invitePending = true
+    }
+    // 任何模式下都必须通过邮箱验证码（防垃圾注册）
     if (!store.consumeCode(email, code)) {
       throw new Error('验证码错误或已过期')
+    }
+    // 全部校验通过后再消费一次性邀请码
+    if (invitePending && !store.consumeInvite(inviteCode, username)) {
+      throw new Error('邀请码无效或已被使用 — 请向管理员索取')
     }
   }
 

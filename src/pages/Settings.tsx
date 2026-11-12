@@ -464,6 +464,63 @@ export default function Settings() {
     }
   }
 
+  // ===== 管理员：注册模式与邀请码（R4 定位：私有内部部署）=====
+  const [regMode, setRegMode] = useState<'open' | 'closed' | 'invite'>('open')
+  const [invites, setInvites] = useState<{ id: string; code: string; used: boolean; usedBy: string }[]>([])
+  const [newInviteCode, setNewInviteCode] = useState<string | null>(null)
+  const [regMsg, setRegMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const [regBusy, setRegBusy] = useState(false)
+
+  useEffect(() => {
+    if (!isAdmin) return
+    void api<{ mode: 'open' | 'closed' | 'invite'; invites: typeof invites }>('/admin/registration', { token: sessionToken ?? '' })
+      .then((r) => { setRegMode(r.mode); setInvites(r.invites) })
+      .catch(() => { /* ignore */ })
+  }, [isAdmin, sessionToken])
+
+  async function saveRegMode(mode: 'open' | 'closed' | 'invite') {
+    setRegBusy(true)
+    setRegMsg(null)
+    try {
+      await api('/admin/registration', { method: 'PUT', token: sessionToken ?? '', body: { mode } })
+      setRegMode(mode)
+      setRegMsg({ ok: true, text: '✓' })
+    } catch (e) {
+      setRegMsg({ ok: false, text: e instanceof Error ? e.message : String(e) })
+    } finally {
+      setRegBusy(false)
+    }
+  }
+
+  async function createInvite() {
+    setRegBusy(true)
+    setRegMsg(null)
+    try {
+      const r = await api<{ invite: { code: string } }>('/admin/registration/invites', { method: 'POST', token: sessionToken ?? '' })
+      setNewInviteCode(r.invite.code)
+      await api<{ mode: 'open' | 'closed' | 'invite'; invites: typeof invites }>('/admin/registration', { token: sessionToken ?? '' })
+        .then((rr) => setInvites(rr.invites))
+    } catch (e) {
+      setRegMsg({ ok: false, text: e instanceof Error ? e.message : String(e) })
+    } finally {
+      setRegBusy(false)
+    }
+  }
+
+  async function revokeInvite(id: string) {
+    setRegBusy(true)
+    setRegMsg(null)
+    try {
+      await api(`/admin/registration/invites/${encodeURIComponent(id)}`, { method: 'DELETE', token: sessionToken ?? '' })
+      await api<{ mode: 'open' | 'closed' | 'invite'; invites: typeof invites }>('/admin/registration', { token: sessionToken ?? '' })
+        .then((rr) => setInvites(rr.invites))
+    } catch (e) {
+      setRegMsg({ ok: false, text: e instanceof Error ? e.message : String(e) })
+    } finally {
+      setRegBusy(false)
+    }
+  }
+
   // ===== 双因素验证（TOTP）=====
   const [twofaEnabled, setTwofaEnabled] = useState(false)
   const [twofaSetup, setTwofaSetup] = useState<{ secret: string; uri: string } | null>(null)
@@ -966,6 +1023,73 @@ export default function Settings() {
               </button>
             </div>
             <p className="mt-2 font-mono text-[9px] text-ink-mute">{t('settings.smtpTestUsesSaved')}</p>
+          </section>
+        )}
+
+        {/* 注册模式与邀请码（仅管理员；R4 定位：私有内部部署，QQ 邮箱限制不变） */}
+        {isAdmin && (
+          <section className="border border-ink-border bg-ink-deep p-4">
+            <SectionLabel>{t('settings.regSection')}</SectionLabel>
+            <p className="mt-2 font-mono text-[9px] leading-relaxed text-ink-mute">{t('settings.regHint')}</p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              {(['open', 'closed', 'invite'] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => void saveRegMode(m)}
+                  disabled={regBusy || regMode === m}
+                  aria-pressed={regMode === m}
+                  className={`border px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider transition-colors disabled:opacity-40 ${
+                    regMode === m ? 'border-inverse bg-inverse text-ink' : 'border-ink-border text-ink-mute hover:border-inverse hover:text-foreground'
+                  }`}
+                >
+                  {t(`settings.reg.${m}`)}
+                </button>
+              ))}
+              {regBusy && <Loader2 size={11} className="animate-spin text-ink-mute" />}
+            </div>
+
+            <div className="mt-3 border-t border-ink-border pt-3">
+              <p className="font-mono text-[10px] uppercase tracking-wider text-ink-mute">{t('settings.invites')}</p>
+              <button
+                onClick={() => void createInvite()}
+                disabled={regBusy}
+                className="mt-2 border border-inverse px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-foreground transition-colors hover:bg-inverse hover:text-ink disabled:opacity-40"
+              >
+                {t('settings.inviteCreate')}
+              </button>
+              {newInviteCode && (
+                <div className="mt-2 border border-scp-warn/40 bg-scp-warn/5 px-2.5 py-2">
+                  <p className="font-mono text-[9px] text-scp-warn">{t('settings.inviteOnce')}</p>
+                  <p className="mt-1 select-all break-all font-mono text-[12px] text-foreground">{newInviteCode}</p>
+                </div>
+              )}
+              {invites.length > 0 && (
+                <div className="mt-2 space-y-1">
+                  {invites.map((iv) => (
+                    <div key={iv.id} className="flex items-center justify-between gap-2 border border-ink-border px-2 py-1 font-mono text-[10px]">
+                      <span className="min-w-0 truncate text-ink-mute">
+                        {iv.code}
+                        {iv.used && <span className="ml-2 text-ink-mute/70">{t('settings.inviteUsedBy')} {iv.usedBy}</span>}
+                      </span>
+                      {iv.used ? (
+                        <span className="shrink-0 text-[9px] uppercase text-scp-safe">{t('settings.inviteUsed')}</span>
+                      ) : (
+                        <button
+                          onClick={() => void revokeInvite(iv.id)}
+                          aria-label={`${t('settings.inviteRevoke')} ${iv.code}`}
+                          className="shrink-0 font-mono text-[9px] uppercase tracking-wider text-ink-mute transition-colors hover:text-scp-err"
+                        >
+                          {t('settings.inviteRevoke')}
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            {regMsg && (
+              <p className={`mt-2 font-mono text-[10px] ${regMsg.ok ? 'text-scp-safe' : 'text-scp-err'}`}>{regMsg.text}</p>
+            )}
           </section>
         )}
 

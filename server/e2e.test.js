@@ -229,6 +229,129 @@ async function waitForServer(timeoutMs = 20_000) {
   r = await req('POST', '/api/auth/login', { identifier: 'admin1', password: 'admin123' })
   assert('禁用后登录恢复直接', r.status === 200 && r.body.token && !r.body.pending2fa)
 
+  // ===== R4：成员与权限 / 定时任务 / 通知规则 / 玩家历史 =====
+  // 24) 造 owner2 / member1（store 直建模拟已有账号；注册后续需验证码，见 9)
+  store.upsertUser('owner2', { username: 'owner2', email: 'owner2@qq.com', role: 'user', passwordHash: crypto.hashPassword('pass1234'), createdAt: Date.now() })
+  store.upsertUser('member1', { username: 'member1', email: 'member1@qq.com', role: 'user', passwordHash: crypto.hashPassword('pass1234'), createdAt: Date.now() })
+  r = await req('POST', '/api/auth/login', { identifier: 'owner2', password: 'pass1234' })
+  assert('R4 owner2 登录', r.status === 200 && r.body.token, JSON.stringify(r.body))
+  const owner2Token = r.body.token
+  r = await req('POST', '/api/auth/login', { identifier: 'member1', password: 'pass1234' })
+  assert('R4 member1 登录', r.status === 200 && r.body.token, JSON.stringify(r.body))
+  const memberToken = r.body.token
+
+  // 25) owner2 建服务器
+  r = await req('POST', '/api/servers', { host: 'gameserver.example.test', port: 8081, token: 'vt', apiKey: 'ak', label: 'R4Srv' }, owner2Token)
+  assert('R4 owner2 建服务器', r.status === 200 && r.body.server?.id && r.body.server.role === 'owner', JSON.stringify(r.body))
+  const srvId = r.body.server.id
+
+  // 26) 平台管理员（非该服务器成员）不能管理他人服务器成员
+  r = await req('POST', `/api/servers/${srvId}/members`, { username: 'member1', role: 'viewer' }, adminToken)
+  assert('R4 非成员管理员不能管理他人服务器成员', r.status === 400 && !r.body.success, JSON.stringify(r.body))
+
+  // 27) owner2 分享 viewer 给 member1
+  r = await req('POST', `/api/servers/${srvId}/members`, { username: 'member1', role: 'viewer' }, owner2Token)
+  assert('R4 owner 分享 viewer 成员', r.status === 200 && r.body.members?.some((m) => m.username === 'member1'), JSON.stringify(r.body))
+
+  // 28) member1 列表可见共享服务器且角色 viewer
+  r = await req('GET', '/api/servers', null, memberToken)
+  const shared = (r.body.servers || []).find((s) => s.id === srvId)
+  assert('R4 共享服务器出现在成员列表且角色 viewer', r.status === 200 && shared && shared.role === 'viewer' && shared.sharedBy === 'owner2', JSON.stringify(r.body))
+
+  // 29) viewer 的控制调用被拒（角色强制先于上游）
+  r = await req('POST', '/api/sl/call', { serverId: srvId, path: '/control/broadcast', body: { message: 'x' } }, memberToken)
+  assert('R4 viewer 控制调用 403', r.status === 403 && /只看数据/.test(r.body.message), JSON.stringify(r.body))
+
+  // 30) viewer 也不能查看成员列表
+  r = await req('GET', `/api/servers/members?serverId=${srvId}`, null, memberToken)
+  assert('R4 viewer 不能查看成员列表', r.status === 403 && !r.body.success, JSON.stringify(r.body))
+
+  // 31) 升级为 operator 后角色放行到上游（无真实游戏服 → 非 403）
+  r = await req('PUT', `/api/servers/${srvId}/members/member1`, { role: 'operator' }, owner2Token)
+  assert('R4 owner 改成员角色为 operator', r.status === 200 && r.body.success, JSON.stringify(r.body))
+  r = await req('POST', '/api/sl/call', { serverId: srvId, path: '/control/broadcast', body: { message: 'x' } }, memberToken)
+  assert('R4 operator 控制调用透传上游（无上游 → 非 403）', r.status !== 403, JSON.stringify(r.body))
+
+  // 32) 非所有者不能删除服务器
+  r = await req('DELETE', `/api/servers/${srvId}`, null, memberToken)
+  assert('R4 operator 不能删除服务器', r.status === 403 && /所有者/.test(r.body.message), JSON.stringify(r.body))
+
+  // 33) 定时任务：operator 不能创建；owner 创建成功；禁 sldataapi 命令；暂停仅 owner/manager
+  r = await req('POST', '/api/schedules', { serverId: srvId, kind: 'broadcast', payload: { message: 'hi' }, intervalSeconds: 300 }, memberToken)
+  assert('R4 operator 不能创建定时任务', r.status === 400 && /仅所有者或管理者/.test(r.body.message), JSON.stringify(r.body))
+  r = await req('POST', '/api/schedules', { serverId: srvId, kind: 'broadcast', payload: { message: '重启提醒' }, intervalSeconds: 300 }, owner2Token)
+  assert('R4 owner 创建定时任务', r.status === 200 && r.body.schedule?.id, JSON.stringify(r.body))
+  const schId = r.body.schedule?.id
+  r = await req('POST', '/api/schedules', { serverId: srvId, kind: 'console', payload: { command: 'sldataapi apikey create x admin' }, intervalSeconds: 300 }, owner2Token)
+  assert('R4 定时任务禁止 sldataapi 命令', r.status === 400 && /sldataapi/.test(r.body.message), JSON.stringify(r.body))
+  r = await req('GET', '/api/schedules', null, memberToken)
+  assert('R4 operator 可见定时任务列表', r.status === 200 && r.body.schedules?.some((x) => x.id === schId), JSON.stringify(r.body))
+  r = await req('PUT', `/api/schedules/${schId}`, { enabled: false }, memberToken)
+  assert('R4 operator 不能暂停定时任务', r.status === 400 && /仅所有者或管理者/.test(r.body.message), JSON.stringify(r.body))
+  r = await req('PUT', `/api/schedules/${schId}`, { enabled: false }, owner2Token)
+  assert('R4 owner 暂停定时任务', r.status === 200 && r.body.schedule?.enabled === false, JSON.stringify(r.body))
+
+  // 34) 通知规则：member1（非管理员）建规则时 email 标志被忽略；增删改查可用
+  r = await req('POST', '/api/notifications/rules', { serverId: '*', events: ['warhead_started'], inapp: true, email: true, minIntervalSeconds: 60 }, memberToken)
+  assert('R4 member1 建通知规则（email 标志被忽略）', r.status === 200 && r.body.rule?.email === false, JSON.stringify(r.body))
+  const ruleId = r.body.rule?.id
+  r = await req('GET', '/api/notifications', null, memberToken)
+  assert('R4 通知收件箱可读', r.status === 200 && Array.isArray(r.body.items), JSON.stringify(r.body))
+  r = await req('PUT', `/api/notifications/rules/${ruleId}`, { enabled: false }, memberToken)
+  assert('R4 规则停用', r.status === 200 && r.body.rule?.enabled === false, JSON.stringify(r.body))
+  r = await req('DELETE', `/api/notifications/rules/${ruleId}`, null, memberToken)
+  assert('R4 规则删除', r.status === 200 && r.body.success, JSON.stringify(r.body))
+
+  // 35) 玩家历史：viewer 可读（空数据）；保留天数仅管理员
+  r = await req('GET', `/api/servers/history?serverId=${srvId}&days=7`, null, memberToken)
+  assert('R4 viewer 可读玩家历史', r.status === 200 && r.body.history && Array.isArray(r.body.history.users) && Array.isArray(r.body.history.trend), JSON.stringify(r.body))
+  r = await req('PUT', '/api/admin/history', { days: 7 }, owner2Token)
+  assert('R4 非管理员不能改历史保留天数', r.status === 403, JSON.stringify(r.body))
+  r = await req('PUT', '/api/admin/history', { days: 7 }, adminToken)
+  assert('R4 管理员改保留天数', r.status === 200 && r.body.days === 7, JSON.stringify(r.body))
+  r = await req('POST', '/api/admin/history/clear', { serverId: srvId }, adminToken)
+  assert('R4 管理员清除历史', r.status === 200 && r.body.success, JSON.stringify(r.body))
+
+  // 36) 移除成员后访问权撤销
+  r = await req('DELETE', `/api/servers/${srvId}/members/member1`, null, owner2Token)
+  assert('R4 owner 移除成员', r.status === 200 && r.body.success, JSON.stringify(r.body))
+  r = await req('GET', '/api/servers', null, memberToken)
+  assert('R4 移除后共享服务器不再出现在成员列表', r.status === 200 && !(r.body.servers || []).some((s) => s.id === srvId), JSON.stringify(r.body))
+
+  // ===== R4 定位补充：注册模式（内部部署）=====
+  // 37) closed：自助注册被拒（模式检查先于验证码，无需真码）
+  r = await req('PUT', '/api/admin/registration', { mode: 'closed' }, adminToken)
+  assert('R4a 管理员关闭自助注册', r.status === 200 && r.body.mode === 'closed', JSON.stringify(r.body))
+  r = await req('GET', '/api/auth/status')
+  assert('R4a status 暴露 registrationMode', r.body.registrationMode === 'closed', JSON.stringify(r.body))
+  r = await req('POST', '/api/auth/register', { email: 'tryclose@qq.com', username: 'tryclose', password: 'pass1234', code: '' })
+  assert('R4a closed 模式拒绝自助注册', r.status === 400 && /自助注册已关闭/.test(r.body.message), JSON.stringify(r.body))
+
+  // 38) invite：坏邀请码先于验证码被拒；好邀请码进入验证码校验（坏码不烧邀请码）
+  r = await req('PUT', '/api/admin/registration', { mode: 'invite' }, adminToken)
+  assert('R4a 切换邀请制', r.status === 200 && r.body.mode === 'invite', JSON.stringify(r.body))
+  r = await req('POST', '/api/auth/register', { email: 'iv1@qq.com', username: 'iv1', password: 'pass1234', code: '', inviteCode: 'inv_bad' })
+  assert('R4a 坏邀请码被拒', r.status === 400 && /邀请码无效/.test(r.body.message), JSON.stringify(r.body))
+  r = await req('POST', '/api/admin/registration/invites', {}, adminToken)
+  assert('R4a 管理员生成邀请码', r.status === 200 && r.body.invite?.code?.startsWith('inv_'), JSON.stringify(r.body))
+  const inviteCode = r.body.invite.code
+  r = await req('GET', '/api/admin/registration', null, adminToken)
+  assert('R4a 邀请码列表脱敏', r.status === 200 && !(JSON.stringify(r.body.invites || []).includes(inviteCode)), JSON.stringify(r.body))
+  r = await req('POST', '/api/auth/register', { email: 'iv1@qq.com', username: 'iv1', password: 'pass1234', code: '000000', inviteCode })
+  assert('R4a 好邀请码进入验证码校验', r.status === 400 && /验证码错误或已过期/.test(r.body.message), JSON.stringify(r.body))
+  r = await req('GET', '/api/admin/registration', null, adminToken)
+  const pendingInvite = (r.body.invites || []).find((iv) => !iv.used)
+  if (pendingInvite) {
+    r = await req('DELETE', `/api/admin/registration/invites/${pendingInvite.id}`, null, adminToken)
+    assert('R4a 吊销未用邀请码', r.status === 200 && r.body.success, JSON.stringify(r.body))
+  }
+
+  // 39) 恢复 open（QQ 邮箱自助注册默认不变）
+  r = await req('PUT', '/api/admin/registration', { mode: 'open' }, adminToken)
+  assert('R4a 恢复开放注册', r.status === 200 && r.body.mode === 'open', JSON.stringify(r.body))
+  r = await req('POST', '/api/auth/register', { email: 'x@yahoo.com', username: 'nope', password: 'pass1234', code: '' })
+  assert('R4a 开放模式下仍仅限 QQ 邮箱', r.status === 400 && /QQ 邮箱/.test(r.body.message), JSON.stringify(r.body))
+
   console.log('\n[test] 完成（失败项会标 FAIL）')
   server.kill()
   fs.rmSync(testDataDir, { recursive: true, force: true })

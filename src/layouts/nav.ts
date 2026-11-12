@@ -2,7 +2,7 @@ import type { ComponentType } from 'react'
 import {
   LayoutDashboard, Server, Users, Puzzle, ShieldAlert,
   Terminal, ScrollText, Ban, Folder, Code2, Settings, Info, Map, Radio, Megaphone,
-  ClipboardCheck, Activity,
+  ClipboardCheck, Activity, Bell, Clock,
 } from 'lucide-react'
 import type { TKey } from '@/i18n/dict'
 
@@ -26,7 +26,9 @@ export const navItems: NavItem[] = [
   { path: '/logs',          labelKey: 'nav.logs',         icon: ScrollText },
   { path: '/reports',       labelKey: 'nav.reports',      icon: ClipboardCheck },
   { path: '/events',        labelKey: 'nav.events',       icon: Activity },
-  { path: '/banlist',       labelKey: 'nav.banlist',     icon: Ban },
+  { path: '/notifications', labelKey: 'nav.notifications', icon: Bell },
+  { path: '/schedules',     labelKey: 'nav.schedules',     icon: Clock },
+  { path: '/banlist',       labelKey: 'nav.banlist',       icon: Ban },
   { path: '/files',         labelKey: 'nav.files',         icon: Folder },
   { path: '/api',           labelKey: 'nav.api',           icon: Code2 },
   { path: '/settings',      labelKey: 'nav.settings',     icon: Settings },

@@ -29,7 +29,7 @@ export default function Setup() {
   useEffect(() => {
     hasVault().then((exists) => {
       if (exists) navigate('/login', { replace: true })
-    })
+    }).catch(() => { /* 加密库探测失败：停留在初始设置页 */ })
   }, [navigate])
 
   const {

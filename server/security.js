@@ -107,4 +107,27 @@ function isSameOrigin(req, publicOrigin = configuredPublicOrigin) {
   } catch { return false }
 }
 
-module.exports = { canonicalIp, isForbiddenIp, isPrivateIp, isForbiddenTarget, isPrivateHost, resolveHostChecked, isAllowedControlPath, isAllowedReadOnlyPath, isSameOrigin, normalizePublicOrigin }
+
+// Steam 资料/头像代理的重定向白名单：跟随重定向只允许 https 且落在 Steam 自有域，
+// 防止上游 30x 把平台代理引向任意主机（SSRF/中转）。
+const STEAM_REDIRECT_HOSTS = new Set([
+  'steamcommunity.com',
+  'api.steampowered.com',
+  'avatars.steamstatic.com',
+  'avatars.cloudflare.steamstatic.com',
+  'steamcdn-a.akamaihd.net',
+  'cdn.akamai.steamstatic.com',
+  'steamusercontent-a.akamaihd.net',
+  'store.steampowered.com',
+])
+
+function isAllowedSteamRedirect(raw) {
+  try {
+    const u = new URL(String(raw))
+    return u.protocol === 'https:' && STEAM_REDIRECT_HOSTS.has(u.hostname.toLowerCase())
+  } catch {
+    return false
+  }
+}
+
+module.exports = { isAllowedSteamRedirect, canonicalIp, isForbiddenIp, isPrivateIp, isForbiddenTarget, isPrivateHost, resolveHostChecked, isAllowedControlPath, isAllowedReadOnlyPath, isSameOrigin, normalizePublicOrigin }

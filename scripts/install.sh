@@ -14,13 +14,13 @@ echo "=============================================="
 
 # ---------- 1. 检测 Node ----------
 if ! command -v node >/dev/null 2>&1; then
-  echo "==> 未检测到 Node.js，尝试安装 Node 20…"
-  curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+  echo "==> 未检测到 Node.js，尝试安装 Node 22（与 package.json engines 对齐）…"
+  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
   apt-get install -y nodejs
 fi
 NODE_MAJOR=$(node -e 'console.log(process.versions.node.split(".")[0])')
-if [ "$NODE_MAJOR" -lt 18 ]; then
-  echo "错误：需要 Node >= 18（当前 $(node -v)）"
+if [ "$NODE_MAJOR" -lt 22 ]; then
+  echo "错误：需要 Node >= 22（当前 $(node -v)）"
   exit 1
 fi
 echo "==> Node $(node -v) 就绪"
@@ -34,7 +34,7 @@ else
   # 若 server 目录无独立依赖，从根目录复制 node_modules 中的 nodemailer
   if [ ! -d "$APP_DIR/server/node_modules/nodemailer" ]; then
     echo "==> 尝试从根 node_modules 复用…"
-    [ -d "$APP_DIR/node_modules" ] || (cd "$APP_DIR" && npm install --omit=dev)
+    [ -d "$APP_DIR/node_modules" ] || (cd "$APP_DIR" && { npm ci --omit=dev 2>/dev/null || npm install --omit=dev; })
   fi
 fi
 

@@ -27,6 +27,8 @@ const Files = lazy(() => import('@/pages/Files'))
 const Api = lazy(() => import('@/pages/Api'))
 const Settings = lazy(() => import('@/pages/Settings'))
 const About = lazy(() => import('@/pages/About'))
+const Notifications = lazy(() => import('@/pages/Notifications'))
+const Schedules = lazy(() => import('@/pages/Schedules'))
 
 const Fallback = () => (
   <div className="flex h-full items-center justify-center text-ink-mute font-mono text-xs">
@@ -92,6 +94,8 @@ export default function App() {
                     <Route path="/logs" element={<Logs />} />
                     <Route path="/reports" element={<Reports />} />
                     <Route path="/events" element={<Events />} />
+                    <Route path="/notifications" element={<Notifications />} />
+                    <Route path="/schedules" element={<Schedules />} />
                     <Route path="/banlist" element={<BanList />} />
                     <Route path="/files" element={<Files />} />
                     <Route path="/api" element={<Api />} />

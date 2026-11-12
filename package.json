@@ -37,7 +37,7 @@
     "framer-motion": "^11.11.0",
     "lucide-react": "^0.454.0",
     "marked": "^18.0.10",
-    "nodemailer": "^9.0.3",
+    "nodemailer": "^10.5.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-hook-form": "^7.53.0",
@@ -60,5 +60,8 @@
   },
   "engines": {
     "node": ">=22.14.0"
+  },
+  "overrides": {
+    "zod": "^4.6.6"
   }
 }

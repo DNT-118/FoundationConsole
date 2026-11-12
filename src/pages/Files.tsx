@@ -1,13 +1,17 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  ArrowUp, Folder, File, RefreshCw, Save, ArrowLeft, Loader2,
+  ArrowUp, Folder, File, RefreshCw, Save, ArrowLeft, Loader2, Download, Upload,
 } from 'lucide-react'
 import PageStub from '@/components/PageStub'
 import ControlNotice from '@/components/ControlNotice'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import { useT } from '@/i18n'
 import { useControlMutation, useControlSource, makeControlQueryFn } from '@/hooks/useControl'
+import { useServersStore } from '@/store/serversStore'
+import { betaKnown, useUpstreamStore } from '@/ws/upstreamStore'
+import { chunkedRead, chunkedWrite, ChunkCancelled, FILE_MAX_WRITE_BYTES, sha256Hex } from '@/api/filesChunk'
+import { describeControlError } from '@/utils/controlHint'
 import type { FileListResult, FileReadResult } from '@/types/api'
 
 function fmtSize(n: number): string {
@@ -35,8 +39,20 @@ export default function Files() {
   const [editing, setEditing] = useState<{ path: string; content: string } | null>(null)
   const [saveConfirm, setSaveConfirm] = useState(false)
 
+  // [内测 beta_file_root_ws] 分块读写：仅当 WS hello 报告 file_chunks 能力时提供 UI；
+  // 能力未知（HTTP 回退）时显示"需要 WS"提示，已确认未开启时显示"上游未开启"提示。
+  const serverId = useServersStore((s) => s.activeId)
+  const upstream = useUpstreamStore((s) => (serverId ? s.byServer[serverId] : undefined))
+  const chunksOn = betaKnown(upstream) && upstream.beta.includes('file_chunks')
+  const chunksOff = betaKnown(upstream) && !upstream.beta.includes('file_chunks')
+
+  // 分块操作状态 + 取消标志
+  const [chunkOp, setChunkOp] = useState<{ kind: 'read' | 'write'; done: number; total: number } | null>(null)
+  const [chunkMsg, setChunkMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const cancelRef = useRef(false)
+
   const canRun = !!control
-  const busy = mutation.isPending
+  const busy = mutation.isPending || chunkOp !== null
 
   // 目录列表
   const listQuery = useQuery({
@@ -94,6 +110,66 @@ export default function Files() {
       },
     )
   }
+
+  // ===== [内测] 分块读取（大文件/精确校验）：read_chunk 循环 + 整文件 sha256 校验 =====
+  async function doChunkRead() {
+    if (!control || !editing) return
+    cancelRef.current = false
+    setChunkMsg(null)
+    setChunkOp({ kind: 'read', done: 0, total: 0 })
+    try {
+      const r = await chunkedRead(control, editing.path, {
+        onProgress: (done, total) => setChunkOp({ kind: 'read', done, total }),
+        shouldCancel: () => cancelRef.current,
+      })
+      setEditing((ed) => (ed ? { ...ed, content: r.text } : ed))
+      setChunkMsg({ ok: true, text: `✓ ${t('files.chunkReadDone').replace('{size}', String(r.size))}${r.sha256 ? ` · sha256 ${r.sha256.slice(0, 12)}…` : ''}` })
+    } catch (e) {
+      setChunkMsg({
+        ok: false,
+        text: e instanceof ChunkCancelled
+          ? `✗ ${t('files.chunkCancelled')}`
+          : `✗ ${describeControlError(e, t)}`,
+      })
+    } finally {
+      setChunkOp(null)
+    }
+  }
+
+  // ===== [内测] 分块上传（write_chunk append/final + sha256 端到端校验） =====
+  async function doChunkSave() {
+    if (!control || !editing) return
+    const totalBytes = new TextEncoder().encode(editing.content).length
+    if (totalBytes > FILE_MAX_WRITE_BYTES) {
+      setChunkMsg({ ok: false, text: `✗ ${t('files.chunkTooLarge').replace('{limit}', String(FILE_MAX_WRITE_BYTES))}` })
+      return
+    }
+    cancelRef.current = false
+    setChunkMsg(null)
+    setChunkOp({ kind: 'write', done: 0, total: totalBytes })
+    try {
+      const r = await chunkedWrite(control, editing.path, editing.content, {
+        onProgress: (done, total) => setChunkOp({ kind: 'write', done, total }),
+        shouldCancel: () => cancelRef.current,
+      })
+      setChunkMsg({ ok: true, text: `✓ ${t('files.chunkWriteDone').replace('{bytes}', String(r.bytes))} · sha256 ${r.sha256.slice(0, 12)}…` })
+      void refreshList()
+    } catch (e) {
+      setChunkMsg({
+        ok: false,
+        text: e instanceof ChunkCancelled
+          ? `✗ ${t('files.chunkCancelled')}`
+          : `✗ ${describeControlError(e, t)}`,
+      })
+    } finally {
+      setChunkOp(null)
+    }
+  }
+
+  // 本地内容指纹（写入前后一致性提示）
+  const localSha = useMemo(() => {
+    try { return sha256Hex(new TextEncoder().encode(editing?.content ?? '')) } catch { return null }
+  }, [editing?.content])
 
   return (
     <PageStub code="M-12" title={t('nav.files')}>
@@ -220,8 +296,64 @@ export default function Files() {
                 >
                   <Save size={11} /> {t('files.save')}
                 </button>
+                {/* [内测] 分块读写（beta_file_root_ws）：仅在 hello 报告能力时提供 */}
+                {chunksOn && (
+                  <>
+                    <button
+                      onClick={() => void doChunkRead()}
+                      disabled={busy || !editing}
+                      title={t('files.chunkRead')}
+                      className="flex items-center gap-1 border border-ink-border px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-ink-mute transition-colors hover:border-inverse hover:text-foreground disabled:opacity-40"
+                    >
+                      <Download size={11} /> {t('files.chunkRead')}
+                    </button>
+                    <button
+                      onClick={() => void doChunkSave()}
+                      disabled={busy || !editing}
+                      title={t('files.chunkWrite')}
+                      className="flex items-center gap-1 border border-ink-border px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-ink-mute transition-colors hover:border-inverse hover:text-foreground disabled:opacity-40"
+                    >
+                      <Upload size={11} /> {t('files.chunkWrite')}
+                    </button>
+                  </>
+                )}
               </div>
             </div>
+
+            {chunksOn && chunkOp && (
+              <div className="flex items-center gap-2 border-b border-ink-border bg-ink px-3 py-1.5 font-mono text-[10px] text-ink-mute">
+                <Loader2 size={11} className="animate-spin" />
+                <span>{chunkOp.kind === 'read' ? t('files.chunkReading') : t('files.chunkWriting')}</span>
+                <div className="h-[3px] min-w-0 flex-1 bg-ink-deep">
+                  <div
+                    className="h-[3px] bg-scp-safe"
+                    style={{ width: chunkOp.total > 0 ? `${Math.min(100, (chunkOp.done / chunkOp.total) * 100)}%` : '0%' }}
+                  />
+                </div>
+                <span className="shrink-0">{chunkOp.done}/{chunkOp.total || '?'}</span>
+                <button
+                  onClick={() => { cancelRef.current = true }}
+                  className="shrink-0 border border-ink-border px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-ink-mute transition-colors hover:border-scp-err hover:text-scp-err"
+                >
+                  {t('files.chunkCancel')}
+                </button>
+              </div>
+            )}
+            {chunksOn && chunkMsg && (
+              <div className={`border-b px-3 py-1.5 font-mono text-[10px] ${chunkMsg.ok ? 'border-b-scp-safe/40 bg-scp-safe/10 text-scp-safe' : 'border-b-scp-err/40 bg-scp-err/10 text-scp-err'}`}>
+                {chunkMsg.text}
+              </div>
+            )}
+            {!chunksOn && !chunksOff && editing && (
+              <div className="border-b border-ink-border bg-ink px-3 py-1.5 font-mono text-[9px] text-ink-mute">
+                {t('files.chunksNeedWs')}
+              </div>
+            )}
+            {chunksOff && editing && (
+              <div className="border-b border-ink-border bg-ink px-3 py-1.5 font-mono text-[9px] text-scp-warn">
+                {t('files.chunksBetaOff')}
+              </div>
+            )}
 
             {readQuery.isError && (
               <div className="m-3 border-l-2 border-scp-err/60 bg-scp-err/5 px-2 py-1.5 font-mono text-[10px] text-scp-err">
@@ -243,6 +375,9 @@ export default function Files() {
             )}
             <div className="border-t border-ink-border px-3 py-1.5 font-mono text-[9px] text-ink-mute">
               {readQuery.data ? `${readQuery.data.size} ${t('files.size').toLowerCase()}` : ' '}
+              {chunksOn && localSha && (
+                <span className="ml-3" title={localSha}>sha256 {localSha.slice(0, 12)}…</span>
+              )}
             </div>
           </div>
         )}

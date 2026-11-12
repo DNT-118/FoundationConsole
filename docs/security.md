@@ -1,5 +1,7 @@
 # 安全说明
 
+> 定位：服主团队自部署的内部管理平台。安全边界以「团队内部可信 + 上游 SLDataAPI ACL」为前提设计；对外公网暴露请配合反代与 HTTPS，并按需关闭自助注册（设置 → 注册模式）。
+
 ## 凭据去向
 
 - 游戏服 VerifyToken / API Key、SMTP 凭据、Steam Key、TOTP Secret 以 AES-256-GCM 加密保存在**你自己服务器**的数据目录里，主密钥为 `master.key` 或 `PFC_MASTER_KEY`。

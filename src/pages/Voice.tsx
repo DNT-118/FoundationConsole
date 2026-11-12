@@ -271,6 +271,8 @@ export default function Voice() {
               onClick={() => setMuted((v) => !v)}
               disabled={!listening}
               title={t('voice.mute')}
+              aria-label={t('voice.mute')}
+              aria-pressed={muted}
               className="border border-ink-border p-1.5 text-ink-mute transition-colors hover:border-inverse hover:text-foreground disabled:opacity-40"
             >
               {muted ? <VolumeX size={14} /> : <Volume2 size={14} />}

@@ -77,6 +77,11 @@ const clientSweep = setInterval(() => {
     if ([...entry.subs, ...entry.eventSubs].some(id => !owned.has(id)) || (entry.user.role === 'guest' && entry.eventSubs.size)) {
       closeClient(socket); continue
     }
+    // R4：viewer（只看数据）不可持续占用事件流订阅
+    if (typeof deps.accessRole === 'function' && entry.eventSubs.size &&
+        [...entry.eventSubs].some(id => { const r = deps.accessRole(entry.user.username, id); return !r || r === 'viewer' })) {
+      closeClient(socket); continue
+    }
     socket.ping()
   }
 }, 30000)
@@ -148,6 +153,7 @@ function onClientMessage(socket, entry, payloadBuf) {
       set.add(socket)
       ensurePoller(sid)
       pushCached(sid, socket)
+      pushUpstreamInfo(sid, socket)
     }
     return
   }
@@ -158,6 +164,14 @@ function onClientMessage(socket, entry, payloadBuf) {
       : []
     const owned = new Set(deps.listServers(entry.user.username).map((s) => s.id))
     const affected = new Set(entry.eventSubs)
+    // R4 成员角色强制：viewer（只看数据）不可订阅控制事件流
+    if (typeof deps.accessRole === 'function' && wanted.some((sid) => {
+      const role = deps.accessRole(entry.user.username, sid)
+      return !role || role === 'viewer'
+    })) {
+      sendText(socket, JSON.stringify({ type: 'error', message: '当前成员角色为「只看数据」，无事件流权限' }))
+      return
+    }
 
     // 全量覆盖式事件订阅，与数据订阅独立；未拥有的服务器静默忽略。
     for (const sid of entry.eventSubs) {
@@ -226,6 +240,10 @@ async function pollOnce(serverId) {
       p.lastRaw = r.data
       p.lastAt = Date.now()
       p.errAt = 0
+      // R4：玩家历史差分（玩家进出记录，fire-and-forget）
+      if (typeof deps.onPollData === 'function') {
+        try { deps.onPollData(serverId, r.data) } catch { /* 历史记录失败不影响推送 */ }
+      }
       broadcast(serverId, { type: 'state', serverId, fetchedAt: p.lastAt, raw: p.lastRaw })
     } else {
       failPoll(serverId, p, r.message || '目标不可达')
@@ -271,6 +289,26 @@ function broadcastEventStatus(serverId, connected, message) {
   broadcastEvent(serverId, { type: 'event_status', serverId, connected, message })
 }
 
+/** 上游 hello 能力信息推送给订阅该服务器的浏览器；离线时推空（前端显示未知）。 */
+function broadcastUpstreamInfo(serverId, hello) {
+  broadcast(serverId, {
+    type: 'upstream_info',
+    serverId,
+    version: hello?.version ?? '',
+    beta: hello?.beta ?? [],
+    tls: hello ? hello.tls === true : null,
+    certFingerprint: hello?.certFingerprint ?? null,
+  })
+}
+
+/** 浏览器订阅时补发缓存的 upstream_info（在首帧 state 之后）。 */
+function pushUpstreamInfo(serverId, socket) {
+  const up = upstreams.get(serverId)
+  if (up && up.ready && up.hello) {
+    sendText(socket, JSON.stringify({ type: 'upstream_info', serverId, ...up.hello }))
+  }
+}
+
 // ================= 控制调用（call/result） =================
 
 async function handleCall(entry, socket, msg) {
@@ -285,6 +323,14 @@ async function handleCall(entry, socket, msg) {
   if (!deps.isOwned(entry.user.username, serverId)) {
     sendResult(socket, reqId, serverId, false, 403, '无权操作该服务器')
     return
+  }
+  // R4 成员角色强制：viewer（只看数据）不可执行控制调用
+  if (typeof deps.accessRole === 'function') {
+    const role = deps.accessRole(entry.user.username, serverId)
+    if (!role || role === 'viewer') {
+      sendResult(socket, reqId, serverId, false, 403, '当前成员角色为「只看数据」，无控制权限')
+      return
+    }
   }
   if (!isAllowedControlPath(path)) {
     sendResult(socket, reqId, serverId, false, 400, '仅支持 /control/* 路径')
@@ -449,7 +495,7 @@ async function openUpstream(serverId, server, attempt) {
       handshakeTimeout: 8000, maxPayload: 4 * 1024 * 1024, perMessageDeflate: false,
     })
     let settled = false
-    const up = { serverId, socket: ws, ready: false, dead: false, calls: new Map(), heartbeat: null, eventsSubscribed: false, eventsActive: false, lastPong: Date.now() }
+    const up = { serverId, socket: ws, ready: false, dead: false, calls: new Map(), heartbeat: null, eventsSubscribed: false, eventsActive: false, lastPong: Date.now(), hello: null }
     upstreams.set(serverId, up)
     const timer = setTimeout(() => fail(504, '上游 WebSocket 握手超时'), 10000)
     const finish = (result) => { if (!settled) { settled = true; clearTimeout(timer); resolve(result) } }
@@ -477,6 +523,15 @@ async function openUpstream(serverId, server, attempt) {
       if (!msg || typeof msg !== 'object') return fail(502, '上游消息无效')
       if (msg.type === 'hello') {
         up.ready = true
+        // 上游 hello 携带的能力信息（SLDataAPI 2.6）：version / beta / tls / cert_fingerprint。
+        // 转发给订阅该服务器的浏览器（服务器健康卡展示 + 内测能力提示）。
+        up.hello = {
+          version: typeof msg.version === 'string' ? msg.version : '',
+          beta: Array.isArray(msg.beta) ? msg.beta.filter((x) => typeof x === 'string') : [],
+          tls: msg.tls === true,
+          certFingerprint: typeof msg.cert_fingerprint === 'string' ? msg.cert_fingerprint : null,
+        }
+        broadcastUpstreamInfo(serverId, up.hello)
         startUpstreamHeartbeat(up)
         syncUpstreamEventSubscription(serverId)
         finish({ ok: true, up })
@@ -488,6 +543,10 @@ async function openUpstream(serverId, server, attempt) {
         up.eventsActive = false
       } else if (msg.type === 'event') {
         broadcastEvent(serverId, { type: 'event', serverId, event: String(msg.event || 'unknown'), utc: msg.utc, data: msg.data ?? {} })
+        // R4：通知规则评估（fire-and-forget，不影响事件转发）
+        if (typeof deps.onUpstreamEvent === 'function') {
+          try { deps.onUpstreamEvent(serverId, String(msg.event || 'unknown'), msg.data ?? {}) } catch { /* ignore */ }
+        }
       } else if (msg.type === 'result' || msg.type === 'error') {
         const pending = up.calls.get(String(msg.reqId))
         if (pending) {
@@ -511,6 +570,8 @@ function markDead(serverId, reason, expected) {
   } catch { /* ignore */ }
   try { up.socket.terminate() } catch { /* ignore */ }
   upstreams.delete(serverId)
+  // 能力信息随连接失效：推空让前端显示"未知"
+  broadcastUpstreamInfo(serverId, null)
   if (eventSubs.has(serverId)) {
     broadcastEventStatus(serverId, false, reason)
     scheduleEventReconnect(serverId)

@@ -14,6 +14,7 @@ import { useThemeStore } from '@/store/themeStore'
 interface FormValues {
   email: string
   code: string
+  inviteCode?: string
   username: string
   password: string
   confirm: string
@@ -31,12 +32,17 @@ export default function Register() {
   const [busy, setBusy] = useState(false)
   const [sending, setSending] = useState(false)
   const [cooldown, setCooldown] = useState(0)
-  // 首次安装：首个账户自动成为管理员
+  // 首次安装：首个账户自动成为管理员（不受注册模式限制）
   const [firstRun, setFirstRun] = useState(false)
+  // R4 定位（内部部署）：open 自助注册 / closed 关闭 / invite 邀请制
+  const [regMode, setRegMode] = useState<'open' | 'closed' | 'invite'>('open')
 
   useEffect(() => {
-    void api<{ firstRun: boolean }>('/auth/status')
-      .then((r) => setFirstRun(r.firstRun))
+    void api<{ firstRun: boolean; registrationMode?: 'open' | 'closed' | 'invite' }>('/auth/status')
+      .then((r) => {
+        setFirstRun(r.firstRun)
+        setRegMode(r.registrationMode ?? 'open')
+      })
       .catch(() => { /* ignore */ })
   }, [])
 
@@ -76,7 +82,7 @@ export default function Register() {
     try {
       const r = await api<{ token: string; user: { username: string; role: 'admin' | 'user' | 'guest'; email?: string } }>(
         '/auth/register',
-        { method: 'POST', body: { email: v.email.trim(), username: v.username.trim(), password: v.password, code: v.code?.trim() ?? '' } },
+        { method: 'POST', body: { email: v.email.trim(), username: v.username.trim(), password: v.password, code: v.code?.trim() ?? '', inviteCode: v.inviteCode?.trim() ?? '' } },
       )
       establish(r.token, r.user)
       resetServers()
@@ -151,6 +157,27 @@ export default function Register() {
               <span className="mt-1 block font-mono text-[10px] text-scp-err">{errors.email.message}</span>
             )}
           </label>
+
+          {regMode === 'closed' && !firstRun && (
+            <div className="border border-scp-warn/40 bg-scp-warn/5 px-3 py-2 font-mono text-[10px] leading-relaxed text-scp-warn">
+              {t('register.closedNotice')}
+            </div>
+          )}
+          {regMode === 'invite' && !firstRun && (
+            <label className="block">
+              <span className="mb-1.5 block font-mono text-[10px] uppercase tracking-wider text-ink-mute">
+                {t('register.inviteCode')}
+              </span>
+              <input
+                {...reg('inviteCode', { required: t('addServer.required') })}
+                placeholder={t('register.invitePh')}
+                className={inputCls(!!errors.inviteCode)}
+              />
+              {errors.inviteCode && (
+                <span className="mt-1 block font-mono text-[10px] text-scp-err">{errors.inviteCode.message}</span>
+              )}
+            </label>
+          )}
 
           {!firstRun && (
             <>
@@ -241,7 +268,7 @@ export default function Register() {
 
           <button
             type="submit"
-            disabled={busy}
+            disabled={busy || (regMode === 'closed' && !firstRun)}
             className="flex w-full items-center justify-center gap-2 border border-inverse py-2.5 font-mono text-[11px] uppercase tracking-[0.2em] text-foreground transition-colors hover:bg-inverse hover:text-ink disabled:opacity-50"
           >
             {busy ? <Loader2 size={13} className="animate-spin" /> : <Mail size={13} />}

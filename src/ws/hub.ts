@@ -9,6 +9,7 @@ import { create } from 'zustand'
 import { useAuthStore } from '@/store/authStore'
 import { useWsStateStore } from '@/ws/stateStore'
 import { useWsEventsStore } from '@/ws/eventsStore'
+import { useUpstreamStore } from '@/ws/upstreamStore'
 import { ApiError } from '@/api/request'
 import type { ControlResult } from '@/types/api'
 
@@ -267,6 +268,18 @@ class WsHub {
         )
         break
       }
+      // 上游 hello 能力信息（SLDataAPI 2.6）：version / beta / tls / cert_fingerprint
+      case 'upstream_info': {
+        const serverId = String(msg.serverId ?? '')
+        if (!serverId) break
+        useUpstreamStore.getState().apply(serverId, {
+          version: typeof msg.version === 'string' ? msg.version : '',
+          beta: Array.isArray(msg.beta) ? msg.beta.filter((x): x is string => typeof x === 'string') : [],
+          tls: msg.tls === true ? true : msg.tls === false ? false : null,
+          certFingerprint: typeof msg.certFingerprint === 'string' ? msg.certFingerprint : null,
+        })
+        break
+      }
       case 'auth_error': {
         this.unavailable = true
         useHubStatus.getState().setUsable(false)
@@ -340,6 +353,7 @@ class WsHub {
     useHubStatus.getState().setUsable(true)
     useWsEventsStore.getState().reset()
     useWsStateStore.getState().reset()
+    useUpstreamStore.getState().reset()
   }
 }
 

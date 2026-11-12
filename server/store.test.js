@@ -9,6 +9,17 @@ process.env.PFC_MASTER_KEY = 'isolated-unit-test-master-key'
 const store = require('./store')
 after(() => fs.rmSync(dir, { recursive: true, force: true }))
 
+test('verification codes are invalidated after 5 wrong attempts (brute-force guard)', () => {
+  store.setCode('bf@qq.com', '123456')
+  // 前 4 次错误仍可继续尝试
+  for (let i = 0; i < 4; i++) assert.equal(store.consumeCode('bf@qq.com', '000000'), false)
+  assert.equal(store.consumeCode('bf@qq.com', '123456'), true) // 正确码仍可用
+  // 连续 5 次错误后码被作废，正确码也失效
+  store.setCode('bf@qq.com', '654321')
+  for (let i = 0; i < 5; i++) assert.equal(store.consumeCode('bf@qq.com', '111111'), false)
+  assert.equal(store.consumeCode('bf@qq.com', '654321'), false)
+})
+
 test('SMTP save preserves bootstrap flag, Steam key and unrelated config', () => {
   store.markAdminBootstrapped()
   store.setSteamKey('test-steam-key')
@@ -69,6 +80,27 @@ test('Microsoft OAuth tokens are stored encrypted and survive form saves; view n
   assert.equal(cleared.authMode, 'oauth2')
   assert.equal(cleared.user, 'admin@qq.com')
   assert.equal(store.getSmtpView().ms.refreshTokenConfigured, false)
+})
+
+test('registration mode defaults to open, clamps invalid values and gates invites', () => {
+  assert.equal(store.getRegistrationMode(), 'open')
+  assert.equal(store.setRegistrationMode('invite'), 'invite')
+  assert.throws(() => store.setRegistrationMode('everything-goes'), /无效注册模式/)
+  assert.equal(store.setRegistrationMode('open'), 'open')
+
+  // 邀请码：生成（inv_ 前缀）→ 列表脱敏 → 校验不消费 → 消费一次性 → 吊销仅限未用
+  const invite = store.createInvite('admin1')
+  assert.ok(invite.code.startsWith('inv_'))
+  const listed = store.listInvites()[0]
+  assert.ok(listed.code.includes('…') && !listed.code.includes(invite.code.slice(8)), '列表不得回明文')
+  assert.equal(store.validateInvite(invite.code), true)
+  assert.equal(store.validateInvite('inv_wrong'), false)
+  assert.equal(store.consumeInvite(invite.code, 'newuser'), true)
+  assert.equal(store.consumeInvite(invite.code, 'newuser'), false)
+  assert.equal(store.validateInvite(invite.code), false)
+  const iv2 = store.createInvite('admin1')
+  assert.equal(store.revokeInvite(iv2.id), true)
+  assert.equal(store.revokeInvite(invite.id), false) // 已用的不能吊销
 })
 
 test('corrupt files fail closed and are never replaced by an empty database', () => {

@@ -5,12 +5,14 @@ import { useServerQuery } from '@/hooks/useServerQuery'
 import { useServersStore } from '@/store/serversStore'
 import { deriveStatus, statusMeta } from '@/utils/status'
 import type { ReactNode } from 'react'
+import { IS_DEMO } from '@/demo/mode'
+import DemoErrorNote from '@/demo/DemoErrorNote'
 
 const FoundationScene = lazy(() => import('@/components/three/FoundationScene'))
 
 export default function Dashboard() {
   const hasServer = useServersStore((s) => s.servers.length > 0)
-  const { data, isFetching, isError } = useServerQuery()
+  const { data, isFetching, isError, error } = useServerQuery()
   const status = deriveStatus(data)
   const meta = statusMeta[status]
   const omega = data?.dntofPlugins.omegaWarhead
@@ -75,6 +77,7 @@ export default function Dashboard() {
             />
             <Row k="Fetched" v={data ? new Date(data.fetchedAt).toLocaleTimeString() : '—'} />
           </div>
+          {IS_DEMO && isError && <DemoErrorNote error={error} />}
         </Card>
       </div>
       </div>

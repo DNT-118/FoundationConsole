@@ -4,6 +4,8 @@ import PageStub from '@/components/PageStub'
 import AddServerDialog from '@/components/AddServerDialog'
 import { useServersStore } from '@/store/serversStore'
 import { useServerQuery } from '@/hooks/useServerQuery'
+import { IS_DEMO } from '@/demo/mode'
+import DemoErrorNote from '@/demo/DemoErrorNote'
 
 export default function Servers() {
   const [open, setOpen] = useState(false)
@@ -63,7 +65,7 @@ function ServerCard({
   onSelect: () => void
   onDelete: () => void
 }) {
-  const { data, isFetching, isError } = useServerQuery({ serverId: id, enabled: active })
+  const { data, isFetching, isError, error } = useServerQuery({ serverId: id, enabled: active })
   const online = data?.online ?? false
 
   return (
@@ -99,6 +101,8 @@ function ServerCard({
           {data ? `${data.playersCount}/${data.maxPlayers}` : '—'}
         </span>
       </div>
+
+      {IS_DEMO && isError && <DemoErrorNote error={error} />}
 
       <div className="mt-3 flex justify-end gap-2">
         {!active && (

@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { IS_DEMO } from '@/demo/mode'
 
 export interface ServerConfig {
   id: string
@@ -71,6 +72,7 @@ export const useServersStore = create<ServersState>()(
         if (get().servers.some((s) => s.id === id)) set({ activeId: id })
       },
     }),
-    { name: 'pfc.servers' },
+    // 演示版用独立的键，避免和同域（*.github.io）其它页面或本地正式版混用
+    { name: IS_DEMO ? 'fdc-demo.servers' : 'pfc.servers' },
   ),
 )

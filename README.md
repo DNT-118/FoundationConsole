@@ -16,6 +16,19 @@
 
 数据源默认走 SLDataAPI 的 `GET /get_sl_data`（`verify_token` 查询参数）。
 
+## 在线演示（GitHub Pages）
+
+演示地址：<https://dnt-118.github.io/FoundationConsole/>
+
+演示版来自 `pages-demo` 分支，是纯静态页面，和 `main` 分支的完整版本分开维护：
+
+- 免登录，所有数据（服务器列表、Token、设置）只存在当前浏览器的 `localStorage`（键 `fdc-demo.servers`），清站点数据即清除。
+- 首次打开会自动添加一台「演示服务器（模拟）」（地址 `demo://sample`），数据在浏览器本地生成，不连接任何真实服务器。
+- 页面是 https，浏览器会拦截访问 `http://` 远程服务器（混合内容）；连接真实 SLDataAPI 需要 https 地址且放行 CORS，否则会显示中文原因。
+- 页面顶部有常驻红色提示栏，不可关闭。完整功能请在本地运行 FDC。
+
+本地构建演示版：`npm run build:demo`（默认子路径 `/FoundationConsole/`，可用 `FDC_BASE` 覆盖）。
+
 ## 环境要求
 
 - Node.js **18+**

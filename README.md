@@ -5,7 +5,7 @@
 
 在线演示：<https://dnt-118.github.io/FoundationConsole/>
 
-FDC 是面向 **SCP: Secret Laboratory** 服主的 Web 管理面板，对接 [SLDataAPI](https://github.com/DNTOF/SLDataAPI)。本分支在 `main` 的基础上加了一个构建期「演示模式」，产物是可以直接放在 GitHub Pages 上的纯静态页面。
+FDC 是面向 **SCP: Secret Laboratory** 服主的 Web 管理面板，对接 [SLDataAPI](https://github.com/DNTOF/SLDataAPI)。本分支基于早期 v0.1.0 纯前端版本（`main` 现为带 Node 后端的完整平台），加了一个构建期「演示模式」，产物是可以直接放在 GitHub Pages 上的纯静态页面。
 
 ## 演示版限制
 
@@ -15,7 +15,7 @@ FDC 是面向 **SCP: Secret Laboratory** 服主的 Web 管理面板，对接 [SL
 - Console / RemoteAdmin / Plugins / Files / Logs / BanList / API / Settings / About 仍是占位页，玩家卡片上的操作按钮不可用。
 - 页面顶部有常驻的红色闪烁提示栏，不可关闭。
 
-完整功能请按 `main` 分支的 README 在本机运行或自行部署。
+完整功能（登录、后端代理、控制、语音等）请按 `main` 分支的 README 自行部署。
 
 ## 本分支的改动
 
@@ -25,7 +25,7 @@ FDC 是面向 **SCP: Secret Laboratory** 服主的 Web 管理面板，对接 [SL
 | 子路径 `/FoundationConsole/`、`404.html` 路由回退、`.nojekyll` | `vite.config.ts`（`--mode demo`） |
 | 自动部署到 GitHub Pages（仅 `pages-demo` 分支推送触发） | `.github/workflows/pages.yml` |
 
-不带 `--mode demo` 时，构建结果与 `main` 行为一致。
+不带 `--mode demo` 时，构建结果与早期 v0.1.0 前端行为一致。
 
 ## 本地构建演示版
 

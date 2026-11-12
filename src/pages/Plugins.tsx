@@ -8,6 +8,7 @@ import { useT } from '@/i18n'
 import { useControlSource, makeControlQueryFn } from '@/hooks/useControl'
 import { useServerQuery } from '@/hooks/useServerQuery'
 import { dataSourceFor } from '@/api/registry'
+import { describeControlError } from '@/utils/controlHint'
 import type { PluginInfo } from '@/types/api'
 
 interface PluginsData {
@@ -27,6 +28,10 @@ export default function Plugins() {
   const [resultMsg, setResultMsg] = useState<string | null>(null)
   const [routeBusy, setRouteBusy] = useState<string | null>(null)
   const [routeView, setRouteView] = useState<{ key: string; text: string } | null>(null)
+  // [内测] 适配插件写/动作路由（POST /control/adapted/<id>/<action>）
+  const [actionBusy, setActionBusy] = useState<string | null>(null)
+  const [actionView, setActionView] = useState<{ key: string; text: string } | null>(null)
+  const [actionBodies, setActionBodies] = useState<Record<string, string>>({})
 
   const canRun = !!control
   const canReadRoute = !!(server && dataSourceFor(server).fetchReadOnly)
@@ -51,6 +56,38 @@ export default function Plugins() {
       setRouteView({ key, text: `⚠ ${e instanceof Error ? e.message : String(e)}` })
     } finally {
       setRouteBusy(null)
+    }
+  }
+
+  /**
+   * [内测] 适配插件动作（POST /control/adapted/<plugin_id>/<action>，随 control_transport 走 HTTP/WS）。
+   * 可选 JSON 请求体（按插件暂存于 actionBodies）；ACL 默认拒绝，需 Key 的 endpoints_override 显式放开。
+   */
+  async function runAdaptedAction(pluginId: string, action: string) {
+    if (!control) return
+    const key = `${pluginId}/${action}`
+    const raw = (actionBodies[pluginId] ?? '').trim()
+    let body: unknown = {}
+    if (raw) {
+      try {
+        body = JSON.parse(raw)
+      } catch {
+        setActionView({ key, text: `⚠ ${t('plugins.actionInvalidJson')}` })
+        return
+      }
+    }
+    setActionBusy(key)
+    setActionView(null)
+    try {
+      const r = await control(
+        `/control/adapted/${encodeURIComponent(pluginId)}/${encodeURIComponent(action)}`,
+        body,
+      )
+      setActionView({ key, text: `${r.message || 'ok'}\n${JSON.stringify(r.data ?? {}, null, 2)}` })
+    } catch (e) {
+      setActionView({ key, text: `⚠ ${describeControlError(e, t)}` })
+    } finally {
+      setActionBusy(null)
     }
   }
 
@@ -199,6 +236,40 @@ export default function Plugins() {
                     {routeView && routeView.key.startsWith(`${p.id}/`) && (
                       <pre className="mt-1.5 max-h-40 overflow-auto border border-ink-border/60 bg-ink p-1.5 font-mono text-[9px] leading-relaxed text-ink-mute">
                         {routeView.text}
+                      </pre>
+                    )}
+                    {/* [内测] 写/动作路由：POST /control/adapted/<id>/<action> */}
+                    {p.actions && p.actions.length > 0 && (
+                      <div className="mt-2 border-t border-ink-border/60 pt-2">
+                        <div className="flex flex-wrap gap-1">
+                          {p.actions.map((a) => {
+                            const key = `${p.id}/${a}`
+                            return (
+                              <button
+                                key={a}
+                                onClick={() => void runAdaptedAction(p.id, a)}
+                                disabled={!canRun || actionBusy !== null}
+                                className="border border-scp-warn/40 px-1.5 py-0.5 font-mono text-[9px] text-scp-warn transition-colors hover:bg-scp-warn hover:text-ink disabled:opacity-40"
+                              >
+                                {actionBusy === key ? '…' : `${a} ▸`}
+                              </button>
+                            )
+                          })}
+                        </div>
+                        <input
+                          value={actionBodies[p.id] ?? ''}
+                          onChange={(e) => setActionBodies((m) => ({ ...m, [p.id]: e.target.value }))}
+                          placeholder={t('plugins.actionBody')}
+                          className="mt-1.5 w-full border border-ink-border bg-ink px-2 py-1 font-mono text-[9px] text-foreground placeholder:text-ink-mute focus:outline-none focus:border-inverse disabled:opacity-40"
+                        />
+                        <p className="mt-1 font-mono text-[8px] leading-relaxed text-ink-mute">
+                          {t('plugins.actionsBeta')}
+                        </p>
+                      </div>
+                    )}
+                    {actionView && actionView.key.startsWith(`${p.id}/`) && (
+                      <pre className="mt-1.5 max-h-40 overflow-auto border border-ink-border/60 bg-ink p-1.5 font-mono text-[9px] leading-relaxed text-ink-mute">
+                        {actionView.text}
                       </pre>
                     )}
                     {p.status != null && (

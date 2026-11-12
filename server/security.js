@@ -54,8 +54,21 @@ async function resolveHostChecked(host, isAdmin) {
   return { ok: true, ips }
 }
 
+// [内测] beta_adapted_plugin_actions：POST /control/adapted/<plugin_id>/<action>。
+// 与上游 SLDataAPI 一致：恰好两段，段内允许字母/数字/._-，禁止 ".."，段首必须为字母或数字。
+const ADAPTED_SEGMENT_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/
+
+function isAllowedAdaptedActionPath(value) {
+  if (typeof value !== 'string' || value.length > 200 || !value.startsWith('/control/adapted/')) return false
+  const segs = value.slice('/control/adapted/'.length).split('/')
+  return segs.length === 2 && segs.every((s) => ADAPTED_SEGMENT_RE.test(s) && !s.includes('..'))
+}
+
 function isAllowedControlPath(value) {
-  return typeof value === 'string' && value.length <= 200 && /^\/control\/[a-z][a-z0-9_]*(?:\/[a-z][a-z0-9_]*)*$/.test(value)
+  if (typeof value !== 'string' || value.length > 200) return false
+  // 适配插件动作路由（[内测]）：段规则单独校验（插件 id 含点/横线，固定小写规则不适用）
+  if (value.startsWith('/control/adapted/')) return isAllowedAdaptedActionPath(value)
+  return /^\/control\/[a-z][a-z0-9_]*(?:\/[a-z][a-z0-9_]*)*$/.test(value)
 }
 function isAllowedReadOnlyPath(value) {
   return typeof value === 'string' && value.length <= 200 && !value.includes('..') && (

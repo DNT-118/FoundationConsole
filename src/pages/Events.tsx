@@ -9,14 +9,23 @@ import { useControlSource } from '@/hooks/useControl'
 import { wsHub } from '@/ws/hub'
 import { useWsEventsStore, type SlServerEvent } from '@/ws/eventsStore'
 
+/**
+ * SLDataAPI WsEventBridge 实际推送的事件（对齐 SLDataAPI main bb002dd）。
+ * 上游不推送 player_joined/player_left 等旧占位事件名。
+ */
 const EVENT_LABEL_KEYS: Record<string, TKey> = {
-  player_joined: 'events.playerJoined',
-  player_left: 'events.playerLeft',
-  player_died: 'events.playerDied',
-  elevator_used: 'events.elevatorUsed',
-  door_opened: 'events.doorOpened',
-  round_started: 'events.roundStarted',
-  round_ended: 'events.roundEnded',
+  player_banned: 'events.playerBanned',
+  player_kicked: 'events.playerKicked',
+  player_escaped: 'events.playerEscaped',
+  player_role_changed: 'events.playerRoleChanged',
+  player_reported: 'events.playerReported',
+  wave_respawned: 'events.waveRespawned',
+  decontamination_started: 'events.decontaminationStarted',
+  generator_activated: 'events.generatorActivated',
+  scp_terminated: 'events.scpTerminated',
+  warhead_started: 'events.warheadStarted',
+  warhead_stopped: 'events.warheadStopped',
+  warhead_detonated: 'events.warheadDetonated',
 }
 
 const EMPTY_EVENTS: SlServerEvent[] = []
@@ -26,22 +35,45 @@ function text(data: Record<string, unknown>, key: string): string {
   return value === null || value === undefined || value === '' ? '—' : String(value)
 }
 
+/** {name} 占位填充（未提供的占位保留原样，便于发现字段缺失）。 */
+function fill(template: string, params: Record<string, string>): string {
+  return template.replace(/\{(\w+)\}/g, (m, k: string) => params[k] ?? m)
+}
+
 function eventSummary(event: SlServerEvent, t: (key: TKey) => string): string {
   const d = event.data
+  const who = text(d, 'nickname')
   switch (event.event) {
-    case 'player_joined': return `${text(d, 'nickname')} ${t('events.joinedSuffix')}`
-    case 'player_left': return `${text(d, 'nickname')} ${t('events.leftSuffix')}`
-    case 'player_died': {
-      const attacker = text(d, 'attacker_nickname')
-      return attacker === '—'
-        ? `${text(d, 'nickname')} ${t('events.diedSuffix')}`
-        : `${text(d, 'nickname')} ← ${attacker}`
-    }
-    case 'elevator_used': return `${text(d, 'nickname')} · ${text(d, 'elevator_group')}`
-    case 'door_opened': return `${text(d, 'nickname')} · ${text(d, 'door')}`
-    case 'round_started': return t('events.roundStartedSummary')
-    case 'round_ended': return `${t('events.roundEndedSummary')} · ${text(d, 'leading_team')}`
-    default: return event.event
+    case 'player_banned':
+      return `${who} ${fill(t('events.bannedSuffix'), { issuer: text(d, 'issuer_nickname') })}`
+    case 'player_kicked':
+      return `${who} ${fill(t('events.kickedSuffix'), { issuer: text(d, 'issuer_nickname') })}`
+    case 'player_escaped':
+      return `${who} ${fill(t('events.escapedSuffix'), {
+        old: text(d, 'old_role'), new: text(d, 'new_role'), scenario: text(d, 'scenario'),
+      })}`
+    case 'player_role_changed':
+      return `${who} ${fill(t('events.roleChangedSuffix'), { old: text(d, 'old_role'), new: text(d, 'new_role') })}`
+    case 'player_reported':
+      return fill(t('events.reportedSuffix'), {
+        reporter: text(d, 'reporter_nickname'), target: text(d, 'target_nickname'),
+      })
+    case 'wave_respawned':
+      return fill(t('events.waveSummary'), { team: text(d, 'team') || text(d, 'faction'), count: text(d, 'count') })
+    case 'decontamination_started':
+      return t('events.deconSummary')
+    case 'generator_activated':
+      return `${fill(t('events.generatorSummary'), { engaged: text(d, 'engaged'), total: text(d, 'total') })}${text(d, 'room') !== '—' ? ` · ${text(d, 'room')}` : ''}`
+    case 'scp_terminated':
+      return fill(t('events.scpTerminatedSuffix'), { nickname: who })
+    case 'warhead_started':
+      return t('events.warheadStartedSummary')
+    case 'warhead_stopped':
+      return t('events.warheadStoppedSummary')
+    case 'warhead_detonated':
+      return t('events.warheadDetonatedSummary')
+    default:
+      return event.event
   }
 }
 

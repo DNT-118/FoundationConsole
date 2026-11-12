@@ -238,6 +238,8 @@ class WsHub {
             success: m.ok && !(rawData && typeof rawData === 'object' && 'success' in rawData && rawData.success === false),
             message: m.message || (rawData && typeof rawData === 'object' && 'message' in rawData ? String(rawData.message) : '') || (m.ok ? '' : `上游返回 HTTP ${m.status ?? 0}`),
             data: m.ok ? inner : undefined,
+            // 保留上游 HTTP 状态：业务失败（success=false）时 useControl 据此映射错误码
+            status: m.status,
           })
         }
         break

@@ -71,4 +71,6 @@ npm audit --prefix server --audit-level=high
 
 ## 验证边界
 
-本地测试和模拟上游覆盖协议、鉴权及界面链路；真实 SCP:SL / LabAPI 的广播显示、管理聊天接收、语音音频、地图操作、插件控制与重启仍需测试服验收。上游 `player/inventory` 与 `dummies` 仍为 501，平台不将其展示为可用功能。
+本地测试和模拟上游覆盖协议、鉴权及界面链路；真实 SCP:SL / LabAPI 的广播显示、管理聊天接收、语音音频、地图操作、插件控制与重启仍需测试服验收。
+
+SLDataAPI main（bb002dd 之后）已实现 `player/inventory`、`dummies`、`round/wave`、`map/status` 等端点（见仓库根目录 SYNC-REPORT.md 的对照表）；节日物品 / 糖果等在对应节日未开启时上游返回 409 `holiday_inactive`，控制台会给出本地化提示。内测端点（`files/stat|read_chunk|write_chunk`、`adapted/<id>/<action>`）默认关闭或默认拒绝，未在上游显式开启前平台不将其展示为可用功能。

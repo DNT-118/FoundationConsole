@@ -23,6 +23,13 @@ test('proxy paths cannot escape the selected authentication plane', () => {
   for (const p of ['/control/logs', '/plugins/../x', '/plugins/x/y/z', '/plugins/x/y?x=1']) assert.equal(isAllowedReadOnlyPath(p), false, p)
 })
 
+test('[beta] adapted plugin action routes admit plugin ids with dots/dashes but no traversal', () => {
+  for (const p of ['/control/adapted/example.plugin/reload', '/control/adapted/my-plugin_2/door-open', '/control/adapted/a/b']) assert.ok(isAllowedControlPath(p), p)
+  for (const p of ['/control/adapted/../x', '/control/adapted/a..b/c', '/control/adapted/a/b/c', '/control/adapted/a', '/control/adapted/.hidden/x', '/control/adapted/a/b?x=1', '/control/adapted/x/y/z', '/control/Adapted/a/b']) {
+    assert.equal(isAllowedControlPath(p), false, p)
+  }
+})
+
 test('cross-site mutations and WebSocket handshakes are denied', () => {
   assert.ok(isSameOrigin({ headers: { host: 'console.example', origin: 'https://console.example' } }))
   assert.ok(isSameOrigin({ headers: { host: 'console.example' } }))

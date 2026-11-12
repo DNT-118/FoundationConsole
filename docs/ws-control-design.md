@@ -278,9 +278,12 @@ const pendingCalls = new Map()   // reqId -> { userId, serverId, path, body, soc
 >      v2.5.0 启动自检打印精确行号 + 配置摘要
 >    - 控制台路径为 `/control/console/command`；2.6 已移除 2.5 旧路径别名
 >    - v2.5.4 增加 `subscribe_events` / `unsubscribe_events`。订阅成功后游戏服推送
->      `event{event,utc,data}`；当前事件包括 player_joined、player_left、player_died、
->      elevator_used、door_opened、round_started、round_ended。平台以 25 秒 ping 保活，
->      只向显式订阅该服务器的浏览器转发，不为事件流提供 HTTP 回退。
+>      `event{event,utc,data}`；SLDataAPI main（WsEventBridge）当前事件包括
+>      player_banned、player_kicked、player_escaped、player_role_changed、player_reported、
+>      wave_respawned、decontamination_started、generator_activated、scp_terminated、
+>      warhead_started、warhead_stopped、warhead_detonated
+>      （旧占位事件名 player_joined / door_opened 等上游并不推送，FDC 事件页已对齐真实名单）。
+>      平台以 25 秒 ping 保活，只向显式订阅该服务器的浏览器转发，不为事件流提供 HTTP 回退。
 
 ---
 

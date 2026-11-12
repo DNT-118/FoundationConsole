@@ -9,10 +9,14 @@ import type {
 
 const teamMap: Record<string, Team> = {
   'D级': 'D-Class',
+  // 混沌（ChaosInsurgency）与 D 级同桶计数（d_count = ClassD + Chaos）
+  '混沌': 'D-Class',
   SCP: 'SCP',
   基金会: 'Foundation',
   '九尾狐': 'Foundation',
   观众: 'Spectator',
+  // OtherAlive（Tutorial 等非标准职业）与未知阵营归入 Unknown
+  '其他': 'Unknown',
 }
 
 /** 剥离 SCPSL 富文本标签：<color=#...> <size=N> <b> <i> 等，并去首尾空白。 */
@@ -91,5 +95,7 @@ export function normalizeServerData(
     dntof: (raw.dntof_plugins as DntofInfo | null | undefined) ?? null,
     adaptedPlugins: raw.adapted_plugins ?? [],
     voicePort: raw.voice_port ?? 0,
+    gameVersion: typeof raw.game_version === 'string' ? raw.game_version : '',
+    activeHoliday: typeof raw.active_holiday === 'string' && raw.active_holiday ? raw.active_holiday : '',
   }
 }

@@ -7,6 +7,7 @@ import { useServersOverview } from '@/hooks/useServersOverview'
 import { useServersStore, serverLabel } from '@/store/serversStore'
 import { deriveFleetStatus, statusLabel, statusMeta } from '@/utils/status'
 import { nukeText, phaseText } from '@/utils/serverDisplay'
+import { holidayLabel } from '@/utils/controlHint'
 import { useT } from '@/i18n'
 import { useThemeStore } from '@/store/themeStore'
 import type { TKey } from '@/i18n/dict'
@@ -77,6 +78,9 @@ export default function Dashboard() {
               <Row k={t('dash.apiState')} v={isFetching ? t('common.sync') : isError ? t('common.err') : t('common.idle')} />
               <Row k={t('dash.apiPlayers')} v={data ? String(data.playersCount) : '—'} />
               <Row k={t('dash.apiFetched')} v={data ? new Date(data.fetchedAt).toLocaleTimeString() : '—'} />
+              {/* SLDataAPI 2.6.x：game_version / active_holiday（旧版本服务端缺省时显示 —） */}
+              <Row k={t('dash.gameVersion')} v={data?.gameVersion || '—'} />
+              <Row k={t('dash.activeHoliday')} v={data ? holidayLabel(data.activeHoliday, t) : '—'} />
             </div>
           </Card>
 

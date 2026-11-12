@@ -1,6 +1,7 @@
 import { useMutation } from '@tanstack/react-query'
 import type { ControlResult } from '@/types/api'
 import { dataSourceFor } from '@/api/registry'
+import { controlErrorFrom } from '@/api/controlError'
 import { useServersStore } from '@/store/serversStore'
 import { wsHub, useHubStatus } from '@/ws/hub'
 
@@ -24,7 +25,7 @@ export function useControlSource() {
         const result = useHubStatus.getState().usable
           ? await wsHub.call(server.id, path, body, opts?.signal)
           : await ds!.control!(path, body, opts)
-        if (!result.success) throw new Error(result.message || '操作失败')
+        if (!result.success) throw controlErrorFrom(result)
         return result
       }
     : null

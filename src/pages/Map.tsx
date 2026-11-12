@@ -6,10 +6,11 @@ import ControlNotice from '@/components/ControlNotice'
 import { useT } from '@/i18n'
 import { useControlMutation, useControlSource, makeControlQueryFn } from '@/hooks/useControl'
 import { useServerQuery } from '@/hooks/useServerQuery'
+import { describeControlError, holidayLabel } from '@/utils/controlHint'
 import { generateLayout, type SpawnedRoom } from '@/lib/mapgen/generate'
 import { MAP_DATA } from '@/lib/mapgen/data'
 import { roomLabel } from '@/lib/mapgen/roomNames'
-import type { MapLayout, MapRoom, Team } from '@/types/api'
+import type { MapLayout, MapRoom, MapStatusResult, Team } from '@/types/api'
 import type { TKey } from '@/i18n/dict'
 
 /** 形状 → 网格占用（× GridScale = 世界尺寸）。 */
@@ -286,6 +287,14 @@ export default function Map() {
     refetchInterval: 30_000,
     queryFn: makeControlQueryFn<{ ready: boolean; seed: number }>(control!, '/control/map/seed', {}),
   })
+  // 1.5) 设施状态快照（SLDataAPI 2.6.x /control/map/status，只读）
+  const statusQuery = useQuery({
+    queryKey: ['control', server?.id, 'map', 'status'],
+    enabled: canRun,
+    refetchInterval: 30_000,
+    queryFn: makeControlQueryFn<MapStatusResult>(control!, '/control/map/status', {}),
+  })
+  const facilityStatus = statusQuery.data
   // seed 存在即用：前端布局由 seed 本地算法生成，不依赖服务器端布局缓存
   // （ready=false 仅表示服务器 /control/map layout 未采集成功——新装服务器未开始过
   //  回合或采集失败时如此——但 seed 本身有效，地图照样可以本地还原）
@@ -382,7 +391,7 @@ export default function Map() {
         return queryClient.invalidateQueries({ queryKey: ['control', server?.id, 'map'] })
       })
       .catch((e: unknown) => {
-        setResult({ ok: false, text: e instanceof Error ? e.message : String(e) })
+        setResult({ ok: false, text: describeControlError(e, t) })
       })
   }
 
@@ -560,6 +569,55 @@ export default function Map() {
 
           {/* 控制面板（侧栏） */}
           <section className="col-span-12 xl:col-span-4 space-y-3">
+            {/* 设施状态快照（/control/map/status，只读） */}
+            <div className="border border-ink-border bg-ink-deep p-4">
+              <div className="flex items-center justify-between">
+                <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-mute">
+                  {t('map.status')}
+                </span>
+                {statusQuery.isFetching && <Loader2 size={11} className="animate-spin text-ink-mute" />}
+              </div>
+              <p className="mt-1 font-mono text-[9px] text-ink-mute">{t('map.statusHint')}</p>
+
+              {statusQuery.isError && (
+                <p className="mt-2 font-mono text-[10px] text-ink-mute">
+                  {t('map.statusLoadFailed')}
+                </p>
+              )}
+              {facilityStatus && (
+                <div className="mt-3 grid grid-cols-3 gap-2 font-mono text-[10px]">
+                  {facilityStatus.round && (
+                    <>
+                      <StatusCell label={t('map.statusRound')} value={facilityStatus.round.started ? `${facilityStatus.round.duration_seconds}s` : t('map.statusNone')} />
+                      <StatusCell label={t('map.statusDeaths')} value={String(facilityStatus.round.total_deaths ?? 0)} />
+                      <StatusCell label={t('map.statusSurvivingScps')} value={String(facilityStatus.round.surviving_scps ?? 0)} />
+                      <StatusCell label={t('map.statusEscapedD')} value={String(facilityStatus.round.escaped_class_d ?? 0)} />
+                      <StatusCell label={t('map.statusEscapedS')} value={String(facilityStatus.round.escaped_scientists ?? 0)} />
+                      <StatusCell label={t('map.statusPlayers')} value={`${facilityStatus.round.players ?? 0}`} />
+                    </>
+                  )}
+                  {facilityStatus.decontamination && (
+                    <StatusCell label={t('map.statusDecon')} value={facilityStatus.decontamination.is_decontaminating ? facilityStatus.decontamination.status : t('map.statusNone')} />
+                  )}
+                  {facilityStatus.generators && (
+                    <StatusCell label={t('map.statusGen')} value={`${facilityStatus.generators.engaged}/${facilityStatus.generators.total}`} />
+                  )}
+                  {facilityStatus.warhead && (
+                    <StatusCell label={t('map.statusWarhead')} value={facilityStatus.warhead.in_progress ? (facilityStatus.warhead.time_until_detonation != null ? `${Math.round(facilityStatus.warhead.time_until_detonation)}s` : 'ON') : facilityStatus.warhead.detonated ? 'DETONATED' : t('map.statusNone')} />
+                  )}
+                  {facilityStatus.scp914 && (
+                    <StatusCell label={t('map.status914')} value={facilityStatus.scp914.knob} />
+                  )}
+                  {facilityStatus.holiday && (
+                    <>
+                      <StatusCell label={t('map.statusHoliday')} value={holidayLabel(facilityStatus.holiday.active_holiday, t)} />
+                      <StatusCell label={t('map.statusCandyPool')} value={facilityStatus.holiday.candy_pool} />
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+
             {/* 玩家定位列表（坐标 + 所在房间/区域） */}
             <div className="border border-ink-border bg-ink-deep p-4">
               <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-mute">
@@ -814,5 +872,15 @@ function ActionBtn({
     >
       {children}
     </button>
+  )
+}
+
+/** 设施状态快照的小单元格（标签 + 值）。 */
+function StatusCell({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="border border-ink-border px-2 py-1.5">
+      <span className="block truncate text-[8px] uppercase tracking-wider text-ink-mute">{label}</span>
+      <span className="block truncate text-[11px] text-foreground">{value}</span>
+    </div>
   )
 }

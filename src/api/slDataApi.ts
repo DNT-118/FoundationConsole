@@ -1,5 +1,6 @@
 import type { ControlResult, SlServerData, ServerState } from '@/types/api'
 import type { DataSource, ServerSnapshotOptions } from './DataSource'
+import { controlErrorFrom } from './controlError'
 import { normalizeServerData } from './normalize'
 import { requestJson } from './request'
 
@@ -70,7 +71,8 @@ export function createSlDataApi(config: SlDataApiConfig): DataSource {
     }
     const result = await request<ControlResult>('POST', path, body, opts)
     if (!result.success) {
-      throw new Error(`SLDataAPI: ${result.message}`)
+      // 业务错误带结构化信息（409 holiday_inactive / 501 feature_unavailable 等），供 UI 优雅提示
+      throw controlErrorFrom(result)
     }
     return result
   }

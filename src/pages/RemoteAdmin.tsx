@@ -6,10 +6,15 @@ import PageStub from '@/components/PageStub'
 import ControlNotice from '@/components/ControlNotice'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import { nukeText, phaseText } from '@/utils/serverDisplay'
+import { describeControlError, fill, holidayLabel } from '@/utils/controlHint'
 import { useT } from '@/i18n'
 import { useControlMutation, useControlSource, makeControlQueryFn, type ControlCall } from '@/hooks/useControl'
 import { useServerQuery } from '@/hooks/useServerQuery'
-import type { SlPlayerStatus } from '@/types/api'
+import type {
+  DummiesListResult,
+  SlPlayerStatus,
+  WaveStatusResult,
+} from '@/types/api'
 
 interface PendingConfirm {
   message: string
@@ -67,6 +72,19 @@ export default function RemoteAdmin() {
   const [effectDur, setEffectDur] = useState(10)
   const [stateVals, setStateVals] = useState({ godmode: false, bypass: false, intercom: false })
   const [health, setHealth] = useState('')
+  // 重生波次（/control/round/wave）
+  const [waveFaction, setWaveFaction] = useState<'mtf' | 'chaos'>('mtf')
+  const [waveSeconds, setWaveSeconds] = useState('30')
+  const [waveTokens, setWaveTokens] = useState('')
+  // 假人（/control/dummies）
+  const [dummyNickname, setDummyNickname] = useState('')
+  const [dummyRole, setDummyRole] = useState('')
+  // 物品栏 / 糖果
+  const [itemName, setItemName] = useState('Medkit')
+  const [itemAmount, setItemAmount] = useState(1)
+  const [clearAmmo, setClearAmmo] = useState(false)
+  const [candyName, setCandyName] = useState('random')
+  const [candyAmount, setCandyAmount] = useState(1)
 
   const canRun = !!control
   const busy = mutation.isPending
@@ -81,13 +99,33 @@ export default function RemoteAdmin() {
   })
   const slp = Array.isArray(slpQuery.data?.playlist) ? slpQuery.data : undefined
 
+  // 假人列表（10s 轮询；action=list 为只读）
+  const dummiesQuery = useQuery({
+    queryKey: ['control', server?.id, 'dummies'],
+    enabled: canRun,
+    refetchInterval: 10000,
+    queryFn: makeControlQueryFn<DummiesListResult>(control!, '/control/dummies', { action: 'list' }),
+  })
+  const dummies = dummiesQuery.data
+
+  // 重生波次状态（切换阵营时重新查询）
+  const waveQuery = useQuery({
+    queryKey: ['control', server?.id, 'wave', waveFaction],
+    enabled: canRun,
+    queryFn: makeControlQueryFn<WaveStatusResult>(control!, '/control/round/wave', { action: 'status', faction: waveFaction }),
+  })
+  const wave = waveQuery.data
+
   function exec(call: ControlCall, okText: string) {
     setConfirm(null)
     setResult(null)
     void mutation.mutateAsync(call)
-      .then(() => setResult({ ok: true, text: okText }))
+      .then(() => {
+        setResult({ ok: true, text: okText })
+        return queryClient.invalidateQueries({ queryKey: ['control', server?.id] })
+      })
       .catch((e: unknown) => {
-        setResult({ ok: false, text: e instanceof Error ? e.message : String(e) })
+        setResult({ ok: false, text: describeControlError(e, t) })
       })
   }
 
@@ -107,7 +145,7 @@ export default function RemoteAdmin() {
         return queryClient.invalidateQueries({ queryKey: ['control', server?.id, 'slplayer'] })
       })
       .catch((e: unknown) => {
-        setResult({ ok: false, text: e instanceof Error ? e.message : String(e) })
+        setResult({ ok: false, text: describeControlError(e, t) })
       })
   }
 
@@ -408,6 +446,110 @@ export default function RemoteAdmin() {
                 </ActionBtn>
               </div>
             </div>
+
+            {/* 物品栏（/control/player/inventory） */}
+            <div className="mt-4 border-t border-ink-border pt-3">
+              <span className="font-mono text-[9px] uppercase tracking-wider text-ink-mute">
+                {t('ra.inventory')}
+              </span>
+              <div className="mt-2 grid grid-cols-12 items-center gap-2">
+                <input
+                  value={itemName}
+                  onChange={(e) => setItemName(e.target.value)}
+                  disabled={!canRun}
+                  placeholder={t('ra.inventoryItem')}
+                  className="col-span-12 sm:col-span-5 border border-ink-border bg-ink px-2 py-1.5 font-mono text-[11px] text-foreground placeholder:text-ink-mute focus:outline-none focus:border-inverse disabled:opacity-40"
+                />
+                <input
+                  type="number"
+                  min={1}
+                  max={8}
+                  value={itemAmount}
+                  onChange={(e) => setItemAmount(Number(e.target.value))}
+                  disabled={!canRun}
+                  title={t('ra.inventoryAmount')}
+                  className="col-span-4 sm:col-span-2 border border-ink-border bg-ink px-2 py-1.5 font-mono text-[11px] text-foreground focus:outline-none focus:border-inverse disabled:opacity-40"
+                />
+                <div className="col-span-8 sm:col-span-5 flex flex-wrap gap-2">
+                  <ActionBtn
+                    disabled={!canRun || busy || !itemName.trim()}
+                    onClick={() => needTarget(
+                      { path: '/control/player/inventory', body: { target: target.trim(), action: 'add', item: itemName.trim(), amount: itemAmount } },
+                      `${itemName.trim()} ×${itemAmount} → ${targetName}`,
+                    )}
+                  >
+                    {t('ra.inventoryAdd')}
+                  </ActionBtn>
+                  <ActionBtn
+                    disabled={!canRun || busy || !itemName.trim()}
+                    onClick={() => needTarget(
+                      { path: '/control/player/inventory', body: { target: target.trim(), action: 'remove', item: itemName.trim(), amount: itemAmount } },
+                      `- ${itemName.trim()} ×${itemAmount} · ${targetName}`,
+                    )}
+                  >
+                    {t('ra.inventoryRemove')}
+                  </ActionBtn>
+                  <ActionBtn
+                    danger
+                    disabled={!canRun || busy}
+                    onClick={() => needTarget(
+                      { path: '/control/player/inventory', body: { target: target.trim(), action: 'clear', clear_ammo: clearAmmo } },
+                      `clear → ${targetName}`,
+                    )}
+                  >
+                    {t('ra.inventoryClear')}
+                  </ActionBtn>
+                  <label className="flex items-center gap-1.5 font-mono text-[10px] text-ink-mute">
+                    <input
+                      type="checkbox"
+                      checked={clearAmmo}
+                      onChange={(e) => setClearAmmo(e.target.checked)}
+                      disabled={!canRun}
+                      className="accent-foreground"
+                    />
+                    {t('ra.inventoryClearAmmo')}
+                  </label>
+                </div>
+              </div>
+
+              {/* SCP-330 糖果（节日门控：409 holiday_inactive 时显示友好提示） */}
+              <div className="mt-2 grid grid-cols-12 items-center gap-2">
+                <span className="col-span-12 sm:col-span-2 font-mono text-[9px] uppercase tracking-wider text-ink-mute">
+                  {t('ra.candy')}
+                </span>
+                <input
+                  value={candyName}
+                  onChange={(e) => setCandyName(e.target.value)}
+                  disabled={!canRun}
+                  placeholder={t('ra.candyName')}
+                  className="col-span-8 sm:col-span-4 border border-ink-border bg-ink px-2 py-1.5 font-mono text-[11px] text-foreground placeholder:text-ink-mute focus:outline-none focus:border-inverse disabled:opacity-40"
+                />
+                <input
+                  type="number"
+                  min={1}
+                  max={6}
+                  value={candyAmount}
+                  onChange={(e) => setCandyAmount(Number(e.target.value))}
+                  disabled={!canRun}
+                  title={t('ra.inventoryAmount')}
+                  className="col-span-4 sm:col-span-2 border border-ink-border bg-ink px-2 py-1.5 font-mono text-[11px] text-foreground focus:outline-none focus:border-inverse disabled:opacity-40"
+                />
+                <div className="col-span-8 sm:col-span-2">
+                  <ActionBtn
+                    disabled={!canRun || busy}
+                    onClick={() => needTarget(
+                      { path: '/control/player/candy', body: { target: target.trim(), candy: candyName.trim() || 'random', amount: candyAmount } },
+                      `candy ×${candyAmount} → ${targetName}`,
+                    )}
+                  >
+                    {t('ra.candyGive')}
+                  </ActionBtn>
+                </div>
+                <p className="col-span-12 font-mono text-[9px] leading-relaxed text-ink-mute">
+                  {fill(t('ra.holidayHint'), { holiday: holidayLabel(serverData?.activeHoliday ?? '', t) })}
+                </p>
+              </div>
+            </div>
           </section>
 
           {/* ================= 服务器控制 ================= */}
@@ -492,7 +634,177 @@ export default function RemoteAdmin() {
                     {t('ra.warheadDetonate')}
                   </ActionBtn>
                 </div>
+
+                {/* 重生波次（/control/round/wave）：状态查询 + 立即重生 + 倒计时设置 */}
+                <div className="flex items-center gap-2 border-t border-ink-border pt-2">
+                  <span className="w-16 font-mono text-[10px] uppercase tracking-wider text-ink-mute">
+                    {t('ra.wave')}
+                  </span>
+                  <select
+                    value={waveFaction}
+                    onChange={(e) => setWaveFaction(e.target.value as 'mtf' | 'chaos')}
+                    disabled={!canRun}
+                    className="border border-ink-border bg-ink px-2 py-1.5 font-mono text-[10px] text-foreground focus:outline-none focus:border-inverse disabled:opacity-40"
+                  >
+                    <option value="mtf">{t('ra.waveMtf')}</option>
+                    <option value="chaos">{t('ra.waveChaos')}</option>
+                  </select>
+                  {waveQuery.isFetching ? (
+                    <Loader2 size={11} className="animate-spin text-ink-mute" />
+                  ) : wave ? (
+                    <span className="font-mono text-[10px] text-foreground">
+                      {t('ra.waveTimeLeft')} {Math.max(0, Math.round(wave.time_left))}s
+                      {typeof wave.tokens === 'number' && wave.tokens >= 0 ? ` · ${t('ra.waveTokensLabel')} ${wave.tokens}` : ''}
+                    </span>
+                  ) : waveQuery.isError ? (
+                    <span className="font-mono text-[10px] text-ink-mute">{t('ra.waveNone')}</span>
+                  ) : null}
+                  <ActionBtn
+                    danger
+                    disabled={!canRun || busy}
+                    onClick={() => exec(
+                      { path: '/control/round/wave', body: { action: 'instant', faction: waveFaction } },
+                      t('ra.doneWaveInstant'),
+                    )}
+                  >
+                    {t('ra.waveInstant')}
+                  </ActionBtn>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="w-16 shrink-0" />
+                  <input
+                    type="number"
+                    min={0}
+                    value={waveSeconds}
+                    onChange={(e) => setWaveSeconds(e.target.value)}
+                    disabled={!canRun}
+                    title={t('ra.waveSeconds')}
+                    className="w-20 border border-ink-border bg-ink px-2 py-1.5 font-mono text-[10px] text-foreground focus:outline-none focus:border-inverse disabled:opacity-40"
+                  />
+                  <input
+                    type="number"
+                    min={0}
+                    value={waveTokens}
+                    onChange={(e) => setWaveTokens(e.target.value)}
+                    disabled={!canRun}
+                    title={t('ra.waveTokens')}
+                    placeholder={t('ra.waveTokens')}
+                    className="w-20 border border-ink-border bg-ink px-2 py-1.5 font-mono text-[10px] text-foreground placeholder:text-ink-mute focus:outline-none focus:border-inverse disabled:opacity-40"
+                  />
+                  <ActionBtn
+                    disabled={!canRun || busy}
+                    onClick={() => exec(
+                      {
+                        path: '/control/round/wave',
+                        body: {
+                          action: 'set',
+                          faction: waveFaction,
+                          seconds: Math.max(0, Number(waveSeconds) || 0),
+                          ...(waveTokens.trim() !== '' ? { tokens: Math.max(0, Number(waveTokens) || 0) } : {}),
+                        },
+                      },
+                      t('ra.doneWaveSet'),
+                    )}
+                  >
+                    {t('ra.waveSet')}
+                  </ActionBtn>
+                  <ActionBtn
+                    disabled={!canRun}
+                    onClick={() => void queryClient.invalidateQueries({ queryKey: ['control', server?.id, 'wave', waveFaction] })}
+                  >
+                    {t('ra.waveStatus')}
+                  </ActionBtn>
+                </div>
               </div>
+            </div>
+
+            {/* 假人管理（/control/dummies，上限 5） */}
+            <div className="border border-ink-border bg-ink-deep p-4">
+              <div className="flex items-center justify-between">
+                <CardLabel icon="◍">{t('ra.dummies')}</CardLabel>
+                <span className="font-mono text-[10px] text-ink-mute">
+                  {t('ra.dummyCount')
+                    .replace('{count}', String(dummies?.count ?? 0))
+                    .replace('{max}', String(dummies?.max ?? 5))}
+                </span>
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <input
+                  value={dummyNickname}
+                  onChange={(e) => setDummyNickname(e.target.value)}
+                  disabled={!canRun}
+                  placeholder={t('ra.dummyNickname')}
+                  className="w-32 border border-ink-border bg-ink px-2 py-1.5 font-mono text-[11px] text-foreground placeholder:text-ink-mute focus:outline-none focus:border-inverse disabled:opacity-40"
+                />
+                <input
+                  value={dummyRole}
+                  onChange={(e) => setDummyRole(e.target.value)}
+                  disabled={!canRun}
+                  placeholder={t('ra.dummyRole')}
+                  className="w-40 border border-ink-border bg-ink px-2 py-1.5 font-mono text-[11px] text-foreground placeholder:text-ink-mute focus:outline-none focus:border-inverse disabled:opacity-40"
+                />
+                <ActionBtn
+                  disabled={!canRun || busy}
+                  onClick={() => exec(
+                    {
+                      path: '/control/dummies',
+                      body: {
+                        action: 'spawn',
+                        nickname: dummyNickname.trim(),
+                        ...(dummyRole.trim() ? { role: dummyRole.trim() } : {}),
+                      },
+                    },
+                    t('ra.doneDummySpawn'),
+                  )}
+                >
+                  {t('ra.dummySpawn')}
+                </ActionBtn>
+                <ActionBtn
+                  danger
+                  disabled={!canRun || busy}
+                  onClick={() => setConfirm({
+                    message: t('ra.confirmDummyRemoveAll'),
+                    okText: t('ra.doneDummyRemoveAll'),
+                    call: { path: '/control/dummies', body: { action: 'remove', target: 'all' } },
+                  })}
+                >
+                  {t('ra.dummyRemoveAll')}
+                </ActionBtn>
+              </div>
+
+              {dummiesQuery.isError && (
+                <div className="mt-2 border-l-2 border-scp-err/60 bg-scp-err/5 px-2 py-1.5 font-mono text-[10px] text-scp-err">
+                  {describeControlError(dummiesQuery.error, t)}
+                </div>
+              )}
+              {dummies && dummies.dummies.length === 0 && (
+                <p className="mt-2 font-mono text-[10px] text-ink-mute">{t('ra.dummyEmpty')}</p>
+              )}
+              {dummies && dummies.dummies.length > 0 && (
+                <div className="mt-2 space-y-1">
+                  {dummies.dummies.map((dm) => (
+                    <div key={dm.player_id} className="flex items-center justify-between gap-2 border border-ink-border px-2 py-1.5">
+                      <span className="min-w-0 truncate font-mono text-[11px] text-foreground">
+                        {dm.nickname}
+                        <span className="ml-2 text-[9px] text-ink-mute">
+                          #{dm.player_id} · {dm.role}
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        disabled={!canRun || busy}
+                        onClick={() => exec(
+                          { path: '/control/dummies', body: { action: 'remove', target: String(dm.player_id) } },
+                          t('ra.doneDummyRemove'),
+                        )}
+                        className="shrink-0 border border-ink-border px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider text-ink-mute transition-colors hover:border-scp-err hover:text-scp-err disabled:opacity-40"
+                      >
+                        {t('ra.dummyRemove')}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* CASSIE */}

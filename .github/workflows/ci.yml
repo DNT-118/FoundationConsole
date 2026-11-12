@@ -1,0 +1,187 @@
+name: CI/CD
+
+# CI：push / pull_request 时安装依赖、类型检查与语法检查、构建前端、运行后端与前端测试。
+# 发布：仅当推送到 main 的提交信息包含 [release] 或 [release vX.Y.Z] 时，
+#       在 CI 通过后构建发布包（dist + 混淆后端），用仓库 Secret 签名并创建 GitHub Release。
+on:
+  push:
+    branches: ['**']
+    tags-ignore: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  ci:
+    name: CI (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm ci --prefix server
+
+      - name: Lint (typecheck + syntax)
+        run: |
+          npm run typecheck
+          npm run test:syntax
+          bash -n build-package.sh scripts/install.sh
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Backend and frontend tests
+        run: npm test
+
+      - name: Obfuscated backend build
+        run: node server/obfuscate.js
+
+  release:
+    name: Release
+    needs: ci
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      contains(github.event.head_commit.message, '[release')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    env:
+      COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+      PUBLIC_KEY_FILE: keys/fdc-release.pub.pem
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
+
+      - name: Resolve version from commit marker
+        id: version
+        run: |
+          pkg_version="$(node -p "require('./package.json').version")"
+          marker="$(printf '%s\n' "$COMMIT_MESSAGE" | grep -oE '\[release( v?[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?)?\]' | head -n1 || true)"
+          if [ -z "$marker" ]; then
+            echo "::error::提交信息里没有合法的发布标记。格式：[release] 或 [release vX.Y.Z]"
+            exit 1
+          fi
+          wanted="$(printf '%s' "$marker" | sed -E 's/^\[release ?v?//; s/\]$//')"
+          if [ -n "$wanted" ] && [ "$wanted" != "$pkg_version" ]; then
+            echo "::error::发布标记版本 $wanted 与 package.json 版本 $pkg_version 不一致"
+            exit 1
+          fi
+          tag="v$pkg_version"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "::error::标签 $tag 已存在，请先提升 package.json 版本"
+            exit 1
+          fi
+          echo "version=$pkg_version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Require signing key and public key
+        env:
+          FDC_SIGNING_KEY: ${{ secrets.FDC_SIGNING_KEY }}
+        run: |
+          if [ -z "$FDC_SIGNING_KEY" ]; then
+            echo "::error::缺少仓库 Secret FDC_SIGNING_KEY，拒绝发布未签名的发布包"
+            exit 1
+          fi
+          if ! openssl pkey -pubin -in "$PUBLIC_KEY_FILE" -noout 2>/dev/null; then
+            echo "::error::缺少或无效的公钥 $PUBLIC_KEY_FILE，拒绝发布"
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm ci --prefix server
+
+      - name: Build release package
+        env:
+          SKIP_INSTALL: '1'
+          SKIP_TESTS: '1'
+          FDC_VERSION: ${{ steps.version.outputs.version }}
+        run: bash build-package.sh
+
+      - name: Sign package
+        env:
+          FDC_SIGNING_KEY: ${{ secrets.FDC_SIGNING_KEY }}
+          FDC_SIGNING_KEY_PASSPHRASE: ${{ secrets.FDC_SIGNING_KEY_PASSPHRASE }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          umask 077
+          key_file="$RUNNER_TEMP/fdc-signing-key.pem"
+          trap 'rm -f "$key_file"' EXIT
+          printf '%s\n' "$FDC_SIGNING_KEY" > "$key_file"
+          passin=()
+          if [ -n "${FDC_SIGNING_KEY_PASSPHRASE:-}" ]; then passin=(-passin env:FDC_SIGNING_KEY_PASSPHRASE); fi
+
+          # 私钥必须与仓库中提交的公钥配对
+          if ! cmp -s <(openssl pkey -in "$key_file" "${passin[@]}" -pubout) <(openssl pkey -pubin -in "$PUBLIC_KEY_FILE"); then
+            echo "::error::FDC_SIGNING_KEY 与 $PUBLIC_KEY_FILE 不匹配，拒绝发布"
+            exit 1
+          fi
+
+          cd release
+          name="fdc-v$VERSION.tar.gz"
+          sha256sum "$name" > SHA256SUMS
+          for f in "$name" SHA256SUMS; do
+            openssl pkeyutl -sign -inkey "$key_file" "${passin[@]}" -rawin -in "$f" -out "$f.sig"
+            openssl pkeyutl -verify -pubin -inkey "../$PUBLIC_KEY_FILE" -rawin -in "$f" -sigfile "$f.sig"
+          done
+          ls -la
+
+      - name: Create tag and GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          cd release
+          cat > notes.md <<NOTES
+          Foundation Console v$VERSION
+
+          发布包：\`fdc-v$VERSION.tar.gz\`（前端 dist + 混淆后端）。
+          校验与验签方法见仓库 README 的「发布与验签」一节；公钥：\`keys/fdc-release.pub.pem\`。
+
+          提交：$GITHUB_SHA
+          NOTES
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Foundation Console v$VERSION" \
+            --notes-file notes.md \
+            "fdc-v$VERSION.tar.gz" \
+            "fdc-v$VERSION.tar.gz.sig" \
+            "fdc-v$VERSION.tar.gz.sha256" \
+            SHA256SUMS \
+            SHA256SUMS.sig

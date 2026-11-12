@@ -114,6 +114,43 @@ npm run obfuscate      # 生成混淆后端 server-dist/
 
 更多说明见 [本地开发](docs/local-development.md)。
 
+## CI/CD
+
+工作流：`.github/workflows/ci.yml`
+
+- **CI**：每次 push 和 pull request 都会安装依赖、类型检查与语法检查、构建前端、运行测试，并验证混淆后端能生成（Node 22 / 24）。
+- **发布**：推送到 `main` 的提交信息包含发布标记时，在 CI 通过后自动发布：
+  - `[release]`：按 `package.json` 的版本发布；
+  - `[release vX.Y.Z]`：同上，但标记里的版本必须与 `package.json` 一致，否则失败。
+
+  例如先把 `package.json` 改成 `0.3.0`，再提交 `chore: release 0.3.0 [release v0.3.0]`。工作流会构建发布包、签名、创建标签 `vX.Y.Z` 和 GitHub Release，上传发布包、签名和 SHA256 校验值。标签已存在、缺少签名 Secret 或公钥时会直接失败，不会发布未签名的包。
+
+### 发布与验签
+
+发布包使用 Ed25519 签名（OpenSSL 3）。仓库所有者首次配置：
+
+```bash
+# 生成密钥对（带口令保护的私钥）
+openssl genpkey -algorithm ed25519 -aes-256-cbc -out fdc-release.key.pem
+openssl pkey -in fdc-release.key.pem -pubout -out keys/fdc-release.pub.pem
+
+# 私钥与口令存入仓库 Secret（需要 GitHub CLI；也可在网页 Settings → Secrets and variables → Actions 中添加）
+gh secret set FDC_SIGNING_KEY < fdc-release.key.pem
+gh secret set FDC_SIGNING_KEY_PASSPHRASE   # 按提示输入口令；私钥不加密时可不设置
+
+# 只提交公钥，私钥离线妥善保管
+git add keys/fdc-release.pub.pem
+```
+
+下载者验证：
+
+```bash
+sha256sum -c SHA256SUMS
+openssl pkeyutl -verify -pubin -inkey keys/fdc-release.pub.pem -rawin \
+  -in fdc-vX.Y.Z.tar.gz -sigfile fdc-vX.Y.Z.tar.gz.sig
+# 输出 Signature Verified Successfully 即为官方发布包
+```
+
 ## 许可证
 
 [Apache License 2.0](./LICENSE)。版权与致谢见 [NOTICE](./NOTICE)。

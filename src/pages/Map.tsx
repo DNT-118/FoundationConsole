@@ -190,6 +190,8 @@ const ZONE_COLOR: Record<string, string> = {
 
 const teamColor: Record<Team, string> = {
   'D-Class': '#FFC107',
+  // 混沌分裂者：绿色（区别于 D 级黄色）
+  Chaos: '#2ECC71',
   Foundation: '#ffffff',
   SCP: '#FF3B30',
   Spectator: '#888888',

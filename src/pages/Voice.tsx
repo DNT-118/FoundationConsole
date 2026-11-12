@@ -5,6 +5,7 @@ import ControlNotice from '@/components/ControlNotice'
 import { useT } from '@/i18n'
 import { useServerQuery } from '@/hooks/useServerQuery'
 import { useServersStore } from '@/store/serversStore'
+import { parseSteamId } from '@/utils/steamId'
 import type { SlPlayer } from '@/types/api'
 
 /** 频道枚举 → 显示名（与 SLDataAPI VoiceChatChannel 一致；图例只展示 4 个常用频道）。 */
@@ -127,7 +128,8 @@ export default function Voice() {
               if (!channels.includes(info.channel)) channels.push(info.channel)
               next.set(key, {
                 nickname: info.nickname,
-                steamId: info.userid ?? '',
+                // userid 形如 "76561198...@steam"（也有 @northwood/假人）：剥后缀，非 Steam ID 置空
+                steamId: parseSteamId(info.userid) ?? '',
                 channels,
                 lastSeen: Date.now(),
               })

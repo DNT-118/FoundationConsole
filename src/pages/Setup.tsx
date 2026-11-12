@@ -8,7 +8,7 @@ import { useAuthStore } from '@/store/authStore'
 import { useServersStore } from '@/store/serversStore'
 import { useT } from '@/i18n'
 import LangSwitch from '@/components/LangSwitch'
-import AnimeVideoBg from '@/components/AnimeVideoBg'
+import BackgroundLayer from '@/components/BackgroundLayer'
 import { useThemeStore } from '@/store/themeStore'
 
 interface FormValues {
@@ -57,7 +57,7 @@ export default function Setup() {
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       transition={{ duration: 0.3 }}
     >
-      {theme === 'anime' && <AnimeVideoBg />}
+      {theme === 'anime' && <BackgroundLayer />}
       <div className={`absolute inset-0 grid-bg ${theme === 'anime' ? 'opacity-20' : 'opacity-60'}`} />
       <LangSwitch />
 

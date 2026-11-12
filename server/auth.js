@@ -58,7 +58,13 @@ function bumpIpQuota(ip) {
   }
 }
 
-async function sendCode(email, ip) {
+/**
+ * 发送注册验证码。
+ * resolveSmtp：调用方（server.js）注入的发信配置懒解析（OAuth2 模式含 access token）。
+ * 在格式/限流检查全部通过后才解析，保证"邮箱格式不对"等错误优先于"SMTP 未配置"。
+ * 缺省时退回存储配置。
+ */
+async function sendCode(email, ip, resolveSmtp) {
   email = String(email || '').trim().toLowerCase()
   if (!QQ_RE.test(email)) {
     throw new Error('仅支持 QQ 邮箱（@qq.com）注册')
@@ -79,7 +85,7 @@ async function sendCode(email, ip) {
   }
   // 按 IP 的发送配额：每小时 10 封、每天 30 封（防邮件轰炸消耗 SMTP 信誉）
   checkIpQuota(ipKey)
-  const smtp = store.getSmtpConfig()
+  const smtp = resolveSmtp ? await resolveSmtp() : store.getSmtpConfig()
   const code = crypto.randomCode()
   await mail.sendVerificationEmail(smtp, email, code)
   store.setCode(email, code)

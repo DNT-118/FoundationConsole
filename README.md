@@ -87,7 +87,23 @@ PORT=3000 npm start    # 启动后端，同时托管 dist/
 | `PFC_DATA_DIR` | `server/data` | 运行数据目录，首次启动自动创建 |
 | `PFC_MASTER_KEY` | 自动生成 `master.key` | 加密主密钥；设置后不再使用文件 |
 | `PFC_STEAM_KEY` | 空 | Steam Web API Key（也可在设置页填写） |
+| `PFC_MS_CLIENT_ID` | 内置公共应用 ID | Microsoft Entra 多租户公共客户端（非机密默认值，可覆盖） |
+| `PFC_MS_TENANT` | `common` | OAuth 租户：`common` / `consumers` / `organizations` / 具体租户 ID |
+| `PFC_MS_CLIENT_SECRET` | 空 | 可选；仅机密客户端需要，公共客户端留空 |
+| `PFC_MS_REDIRECT_URI` | 空 | 可选；授权码 + PKCE 跳转流程的完整回调地址（默认流程为设备代码流，无需配置）。回调地址只从本变量或 `PFC_PUBLIC_URL` 推导，绝不用请求 Host 头 |
+| `PFC_MS_SCOPES` | `https://outlook.office.com/SMTP.Send offline_access openid email profile` | 可选覆盖 OAuth scope |
 | `SSL_CERT_PATH` / `SSL_KEY_PATH` | `server/certs/*.pem` | 让 Node 直接提供 HTTPS 时使用 |
+
+### Microsoft OAuth（Outlook / Office365 发信）
+
+「设置 → 邮箱配置 → OAuth2」默认走**设备代码流**（管理员通常在远程公网控制台操作，无 localhost 回调）：
+点「连接 Microsoft 账号」→ 打开 [microsoft.com/devicelogin](https://microsoft.com/devicelogin) 输入页面上显示的用户码 → 授权完成后台自动保存加密的 refresh token，**无需再点保存**。
+配置 `PFC_MS_REDIRECT_URI`（或 `PFC_PUBLIC_URL`）后设置页会出现「跳转授权」按钮（授权码 + PKCE，state 绑定管理员会话、10 分钟过期）。
+
+- refresh token 以 `master.key` AES-256-GCM 加密落盘；每次刷新自动轮换写回；`invalid_grant` 时设置页提示「需要重新授权」。
+- access token 仅内存缓存（带过期）；nodemailer 只使用现成 access token（SASL XOAUTH2），不会自行请求令牌端点。
+- SMTP 主机按 id_token 的 `tid` 自动选择：个人账户（outlook.com）→ `smtp-mail.outlook.com:587`，组织账户 → `smtp.office365.com:587`；host 字段可手动覆盖。
+- 普通 SMTP（授权码/密码）模式不受影响；测试发送始终使用**已保存**的配置与凭据。
 
 ### 首次启动与管理员
 

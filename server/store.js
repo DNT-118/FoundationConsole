@@ -294,6 +294,7 @@ function saveConfig(cfg) {
   saveJSON('config.json', cfg)
 }
 
+/** 解密后的完整 SMTP 配置（仅服务端内部使用；GET 接口走 getSmtpView，绝不回明文）。 */
 function getSmtpConfig() {
   const cfg = getConfig()
   if (!cfg.smtp) return null
@@ -305,28 +306,110 @@ function getSmtpConfig() {
     user: cfg.smtp.user,
     pass: crypto.decrypt(cfg.smtp.pass, mk) ?? '',
     from: cfg.smtp.from,
-    clientId: crypto.decrypt(cfg.smtp.clientId ?? '', mk) ?? '',
-    clientSecret: crypto.decrypt(cfg.smtp.clientSecret ?? '', mk) ?? '',
-    refreshToken: crypto.decrypt(cfg.smtp.refreshToken ?? '', mk) ?? '',
+    // Microsoft OAuth（设备码/授权码流程写入；refresh_token 加密落盘）
+    msRefreshToken: crypto.decrypt(cfg.smtp.msRefreshToken ?? '', mk) ?? '',
+    msAccountEmail: cfg.smtp.msAccountEmail || '',
+    msTid: cfg.smtp.msTid || '',
+    msSmtpHost: cfg.smtp.msSmtpHost || '',
+    msNeedsReauth: !!cfg.smtp.msNeedsReauth,
   }
 }
 
-function setSmtpConfig({ authMode, host, port, user, pass, from, clientId, clientSecret, refreshToken }) {
+/** 密钥字段语义：undefined/'' = 保留原值；null = 显式清除；非空字符串 = 覆盖。 */
+function keepSecret(prevPlain, v) {
+  if (v === null) return ''
+  if (v === undefined || v === '') return prevPlain || ''
+  return String(v)
+}
+
+/**
+ * 保存 SMTP 表单配置。
+ *  - secret（pass）为空 = 保留原值，null = 清除（修复"保存时清空输入框会把密码抹掉"）；
+ *  - Microsoft OAuth 令牌不经此表单进入/清除：由 saveMicrosoftAuth / clearMicrosoftAuth 管理。
+ */
+function setSmtpConfig(patch = {}) {
+  const cfg = getConfig()
+  const prev = cfg.smtp || {}
   const mk = masterKey()
-  saveConfig({
-    ...getConfig(),
-    smtp: {
-      authMode: authMode === 'oauth2' ? 'oauth2' : 'password',
-      host: String(host || 'smtp.qq.com').trim(),
-      port: Number(port) || 465,
-      user: String(user || '').trim(),
-      pass: crypto.encrypt(String(pass || ''), mk),
-      from: String(from || '').trim(),
-      clientId: crypto.encrypt(String(clientId || ''), mk),
-      clientSecret: crypto.encrypt(String(clientSecret || ''), mk),
-      refreshToken: crypto.encrypt(String(refreshToken || ''), mk),
+  const prevPass = prev.pass ? (crypto.decrypt(prev.pass, mk) ?? '') : ''
+  const nextPass = keepSecret(prevPass, patch.pass)
+  cfg.smtp = {
+    authMode: patch.authMode !== undefined
+      ? (patch.authMode === 'oauth2' ? 'oauth2' : 'password')
+      : (prev.authMode === 'oauth2' ? 'oauth2' : 'password'),
+    host: String(patch.host ?? prev.host ?? 'smtp.qq.com').trim() || 'smtp.qq.com',
+    port: Number(patch.port) || Number(prev.port) || 465,
+    user: String(patch.user ?? prev.user ?? '').trim(),
+    pass: nextPass ? crypto.encrypt(nextPass, mk) : '',
+    from: String(patch.from ?? prev.from ?? '').trim(),
+    msRefreshToken: prev.msRefreshToken || '',
+    msAccountEmail: prev.msAccountEmail || '',
+    msTid: prev.msTid || '',
+    msSmtpHost: prev.msSmtpHost || '',
+    msNeedsReauth: !!prev.msNeedsReauth,
+  }
+  saveConfig(cfg)
+}
+
+/**
+ * Microsoft OAuth 授权 / 刷新轮换的落盘入口。
+ * refreshToken 用 master.key AES-256-GCM 加密；accountEmail/tid/smtpHost 明文（非机密）。
+ */
+function saveMicrosoftAuth({ refreshToken, accountEmail, tid, smtpHost, needsReauth } = {}) {
+  const cfg = getConfig()
+  const prev = cfg.smtp || {}
+  const mk = masterKey()
+  cfg.smtp = {
+    authMode: prev.authMode === 'oauth2' ? 'oauth2' : (prev.authMode || 'oauth2'),
+    host: prev.host || 'smtp.qq.com',
+    port: Number(prev.port) || 465,
+    user: prev.user || accountEmail || '',
+    pass: prev.pass || '',
+    from: prev.from || '',
+    msRefreshToken: refreshToken !== undefined
+      ? (refreshToken ? crypto.encrypt(String(refreshToken), mk) : '')
+      : (prev.msRefreshToken || ''),
+    msAccountEmail: accountEmail !== undefined ? String(accountEmail || '') : (prev.msAccountEmail || ''),
+    msTid: tid !== undefined ? String(tid || '') : (prev.msTid || ''),
+    msSmtpHost: smtpHost !== undefined ? String(smtpHost || '') : (prev.msSmtpHost || ''),
+    msNeedsReauth: needsReauth !== undefined ? !!needsReauth : !!prev.msNeedsReauth,
+  }
+  saveConfig(cfg)
+}
+
+/** 断开 Microsoft 账号：删除全部 MS 字段。 */
+function clearMicrosoftAuth() {
+  const cfg = getConfig()
+  if (!cfg.smtp) return
+  delete cfg.smtp.msRefreshToken
+  delete cfg.smtp.msAccountEmail
+  delete cfg.smtp.msTid
+  delete cfg.smtp.msSmtpHost
+  delete cfg.smtp.msNeedsReauth
+  saveConfig(cfg)
+}
+
+/** GET /api/admin/smtp 的安全视图：secret 只回布尔，绝不回明文/令牌。 */
+function getSmtpView() {
+  const cfg = getConfig()
+  if (!cfg.smtp) return { configured: false }
+  const s = cfg.smtp
+  return {
+    configured: true,
+    authMode: s.authMode === 'oauth2' ? 'oauth2' : 'password',
+    host: s.host,
+    port: s.port,
+    user: s.user,
+    from: s.from,
+    secretConfigured: !!s.pass,
+    ms: {
+      refreshTokenConfigured: !!s.msRefreshToken,
+      accountEmail: s.msAccountEmail || '',
+      tid: s.msTid || '',
+      hostOverride: s.msSmtpHost || '',
+      needsReauth: !!s.msNeedsReauth,
     },
-  })
+  }
 }
 
 // ================= 管理员引导标记 =================
@@ -468,7 +551,8 @@ module.exports = {
   createSession, getSessionUser, destroySession,
   listServers, addServer, updateServer, removeServer, findServerById,
   setCode, consumeCode, codeCooldown,
-  getSmtpConfig, setSmtpConfig,
+  getSmtpConfig, setSmtpConfig, getSmtpView,
+  saveMicrosoftAuth, clearMicrosoftAuth,
   getSteamKey, setSteamKey,
   isAdminBootstrapped, markAdminBootstrapped,
   getAnnouncement, saveAnnouncement,

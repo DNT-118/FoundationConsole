@@ -64,7 +64,7 @@ export interface AdaptedPluginListResult {
 }
 
 /** Normalized domain model used across the UI. */
-export type Team = 'D-Class' | 'Foundation' | 'SCP' | 'Spectator' | 'Unknown'
+export type Team = 'D-Class' | 'Chaos' | 'Foundation' | 'SCP' | 'Spectator' | 'Unknown'
 export type FoundationStatus = 'SAFE' | 'EUCLID' | 'KETER' | 'THAUMIEL'
 
 export interface Player {

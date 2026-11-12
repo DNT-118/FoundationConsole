@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   useReactTable, getCoreRowModel, getSortedRowModel,
   getFilteredRowModel,
@@ -17,6 +17,8 @@ import type { Player, Team } from '@/types/api'
 
 const teamColor: Record<Team, string> = {
   'D-Class': 'text-scp-warn',
+  // 混沌分裂者：绿色徽记色（区别于 D 级的黄色）
+  Chaos: 'text-scp-safe',
   Foundation: 'text-foreground',
   SCP: 'text-scp-err',
   Spectator: 'text-ink-mute',
@@ -24,6 +26,7 @@ const teamColor: Record<Team, string> = {
 }
 const teamKey: Record<Team, TKey> = {
   'D-Class': 'team.dclass',
+  Chaos: 'team.chaos',
   Foundation: 'team.foundation',
   SCP: 'team.scp',
   Spectator: 'team.spectator',
@@ -100,6 +103,9 @@ function PlayerCard({ player, t }: { player: Player; t: ReturnType<typeof useT> 
   const queryClient = useQueryClient()
 
   const [collapsed, setCollapsed] = useState(true)
+  const [avatarBroken, setAvatarBroken] = useState(false)
+  // 头像地址变化（刷新/换人）时重置回退状态
+  useEffect(() => { setAvatarBroken(false) }, [steam?.avatar])
   const [action, setAction] = useState<ActKind | null>(null)
   const [reason, setReason] = useState('')
   const [duration, setDuration] = useState(60)
@@ -140,11 +146,12 @@ function PlayerCard({ player, t }: { player: Player; t: ReturnType<typeof useT> 
             {t(teamKey[player.team])}
           </div>
         </div>
-        {steam?.avatar ? (
+        {steam?.avatar && !avatarBroken ? (
           <img
             src={steam.avatar}
             alt={player.nickname}
             loading="lazy"
+            onError={() => setAvatarBroken(true)}
             className="h-8 w-8 shrink-0 border border-ink-border object-cover"
           />
         ) : (

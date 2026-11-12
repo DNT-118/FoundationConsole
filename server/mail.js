@@ -2,7 +2,9 @@
  * SMTP 邮件发送（nodemailer）。
  * 支持两种认证：
  *  - password：邮箱授权码/应用密码（QQ/163/Gmail 等）
- *  - oauth2：OAuth2（Outlook/Office365 —— 2024 年起禁用基础认证，必须 OAuth2）
+ *  - oauth2：Microsoft Entra XOAUTH2 —— 调用方（server.js）先用 refresh_token
+ *    取好 access token 放进 smtp.accessToken；本模块只用现成令牌发 SASL XOAUTH2，
+ *    不带 clientId/refreshToken，nodemailer 绝不会尝试刷新（更不会走 Google 端点）。
  */
 const dns = require('node:dns')
 
@@ -23,15 +25,15 @@ function createTransporter(smtp) {
   }
   let auth
   if (smtp.authMode === 'oauth2') {
-    if (!smtp.clientId || !smtp.clientSecret || !smtp.refreshToken) {
-      throw new Error('OAuth2 配置不完整（clientId / clientSecret / refreshToken）')
+    if (!smtp.accessToken) {
+      throw new Error('OAuth2 缺少访问令牌 — 请先在设置页连接 Microsoft 账号（或在授权失效后重新授权）')
     }
     auth = {
       type: 'OAuth2',
       user: smtp.user,
-      clientId: smtp.clientId,
-      clientSecret: smtp.clientSecret,
-      refreshToken: smtp.refreshToken,
+      accessToken: smtp.accessToken,
+      // 只用现成令牌：不提供 clientId/refreshToken，nodemailer 不会尝试自行刷新
+      ...(smtp.accessTokenExpires ? { expires: smtp.accessTokenExpires } : {}),
     }
   } else {
     if (!smtp.pass) {
@@ -44,6 +46,7 @@ function createTransporter(smtp) {
     port: smtp.port || 465,
     secure: (smtp.port || 465) === 465,
     auth,
+    tls: smtp.authMode === 'oauth2' ? { ciphers: 'TLSv1.2' } : undefined,
     connectionTimeout: 15000,
     greetingTimeout: 15000,
     socketTimeout: 20000,

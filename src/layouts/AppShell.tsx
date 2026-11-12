@@ -8,7 +8,7 @@ import { useActivityTouch } from '@/hooks/useActivityTouch'
 import { useAuthStore } from '@/store/authStore'
 import { useServersStore } from '@/store/serversStore'
 import { useThemeStore } from '@/store/themeStore'
-import AnimeVideoBg from '@/components/AnimeVideoBg'
+import BackgroundLayer from '@/components/BackgroundLayer'
 
 export default function AppShell({ children }: { children: ReactNode }) {
   // 会话空闲心跳：1 小时无操作自动登出
@@ -26,7 +26,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className={`relative z-10 flex h-screen w-screen overflow-hidden text-foreground ${theme === 'anime' ? '' : 'bg-ink'}`}>
       {/* 二次元主题背景：视频（默认）+ 弱网/弱设备自动降级静态光晕 */}
-      {theme === 'anime' && <AnimeVideoBg />}
+      {theme === 'anime' && <BackgroundLayer />}
       <Sidebar />
       <div className="flex flex-1 flex-col overflow-hidden">
         <Topbar />

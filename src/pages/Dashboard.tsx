@@ -63,8 +63,9 @@ export default function Dashboard() {
 
           <Card className="col-span-12 md:col-span-6">
             <CardLabel icon={Users} text={t('dash.teamDist')} />
-            <div className="mt-3 grid grid-cols-4 gap-2 font-mono text-[11px]">
+            <div className="mt-3 grid grid-cols-5 gap-2 font-mono text-[11px]">
               <TeamStat label={t('dash.team.dclass')} value={data?.teamCounts['D-Class']} />
+              <TeamStat label={t('dash.team.chaos')} value={data?.teamCounts.Chaos} />
               <TeamStat label={t('dash.team.foundation')} value={data?.teamCounts.Foundation} />
               <TeamStat label={t('dash.team.scp')} value={data?.teamCounts.SCP} />
               <TeamStat label={t('dash.team.spectator')} value={data?.teamCounts.Spectator} />

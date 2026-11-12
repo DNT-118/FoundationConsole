@@ -6,11 +6,12 @@ import type {
   ServerState,
   Team,
 } from '@/types/api'
+import { parseSteamId } from '../utils/steamId.ts'
 
 const teamMap: Record<string, Team> = {
   'D级': 'D-Class',
-  // 混沌（ChaosInsurgency）与 D 级同桶计数（d_count = ClassD + Chaos）
-  '混沌': 'D-Class',
+  // 混沌（ChaosInsurgency）单独成队展示（上游 d_count = ClassD + Chaos，归一化时按玩家拆分）
+  '混沌': 'Chaos',
   SCP: 'SCP',
   基金会: 'Foundation',
   '九尾狐': 'Foundation',
@@ -34,7 +35,8 @@ function normalizePlayer(p: SlPlayer): Player {
     nickname: p.nickname,
     role: p.role,
     team: normalizeTeam(p.team),
-    steamId: p.steam_id || undefined,
+    // "76561198...@steam" → 纯 SteamID64；@northwood/@discord/假人等非 Steam ID 不下发（头像与匹配都跳过）
+    steamId: parseSteamId(p.steam_id),
     x: p.x,
     y: p.y,
     z: p.z,
@@ -64,8 +66,12 @@ export function normalizeServerData(
 ): ServerState {
   const players = raw.players.map(normalizePlayer)
 
+  // 上游 d_count = ClassD + ChaosInsurgency 同桶：按玩家列表把混沌拆出来单独计数，
+  // D 级 = d_count - 混沌数（与聚合数字保持一致）
+  const chaosCount = players.filter((p) => p.team === 'Chaos').length
   const teamCounts: Record<Team, number> = {
-    'D-Class': raw.d_count,
+    'D-Class': Math.max(0, raw.d_count - chaosCount),
+    Chaos: chaosCount,
     Foundation: raw.foundation_count,
     SCP: raw.scp_count,
     Spectator: raw.spectator_count,

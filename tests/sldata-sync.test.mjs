@@ -57,7 +57,7 @@ test('normalize maps the 2.6.x snapshot fields and CN team names', () => {
     success: true,
     server_name: '  <color=#fff>Area-14</color>  ',
     online: true,
-    players_count: 2,
+    players_count: 3,
     max_players: 20,
     round_started: true,
     round_duration: 120,
@@ -71,7 +71,8 @@ test('normalize maps the 2.6.x snapshot fields and CN team names', () => {
     ping: 30,
     players: [
       { nickname: 'A', steam_id: '76561198@example@steam', role: '混沌-步枪手', team: '混沌', x: 1, y: 2, z: 3 },
-      { nickname: 'B', steam_id: '', role: '教程', team: '其他' },
+      { nickname: 'B', steam_id: '', role: 'D级人员', team: 'D级' },
+      { nickname: 'C', steam_id: '', role: '教程', team: '其他' },
     ],
     voice_port: 8082,
     game_version: '14.2.8',
@@ -82,8 +83,13 @@ test('normalize maps the 2.6.x snapshot fields and CN team names', () => {
   assert.equal(state.activeHoliday, 'Halloween')
   assert.equal(state.voicePort, 8082)
   assert.equal(state.nukeCode, 'countdown')
-  assert.equal(state.players[0].team, 'D-Class') // 混沌与 D 级同桶（d_count 口径一致）
-  assert.equal(state.players[1].team, 'Unknown') // OtherAlive → Unknown
+  // 混沌（ChaosInsurgency）单独成队；D 级 = d_count(含混沌) - 混沌数
+  assert.equal(state.players[0].team, 'Chaos')
+  assert.equal(state.players[1].team, 'D-Class')
+  assert.equal(state.players[2].team, 'Unknown') // OtherAlive → Unknown
+  assert.equal(state.teamCounts.Chaos, 1)
+  assert.equal(state.teamCounts['D-Class'], 1)
+  assert.equal(state.teamCounts.Foundation, 0)
 })
 
 test('older servers without the 2.6.x fields normalize to empty defaults', () => {

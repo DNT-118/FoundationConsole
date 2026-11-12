@@ -43,7 +43,8 @@ function applySecurityHeaders(res) {
   res.setHeader(
     'Content-Security-Policy',
     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
-      "img-src 'self' data:; font-src 'self' data:; connect-src 'self'; " +
+      // img-src 放行 http/https：设置页可自定义背景图片 URL（本地上传走 data:）
+      "img-src 'self' data: https: http:; font-src 'self' data:; connect-src 'self'; " +
       "frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
   )
   // 经 Cloudflare 时浏览器侧恒为 HTTPS；纯 HTTP 访问时浏览器会忽略此头，无副作用
@@ -114,56 +115,55 @@ const ROOT = join(__dirname, '..', 'dist')
 
 // ================= 工具 =================
 
-// ---- Outlook/Office365 OAuth2 在线授权流程 ----
-// 管理员点"连接 Microsoft 账号" → /oauth2/start 生成授权 URL（state 会话 10 分钟有效）
-// → 微软登录页 → 回跳 /oauth2/callback（浏览器直达，无 Authorization 头，state 即凭证）
-// → code 换 refresh_token → 合并保存进 SMTP 配置 → 302 回 /settings?oauth=ok|error
-const oauthStates = new Map()   // state -> { clientId, clientSecret, expires }
+// ---- Microsoft OAuth2（SMTP XOAUTH2）：见 server/msOAuth.js ----
+// 默认设备代码流（远程公网控制台，无 localhost 回调）；可选授权码 + PKCE（PFC_MS_REDIRECT_URI / PFC_PUBLIC_URL）。
+// 令牌管理：refresh_token 加密落盘（store.saveMicrosoftAuth），access token 内存缓存，轮换写回。
 
-const OAUTH_AUTH_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize'
-const OAUTH_TOKEN_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/token'
-const OAUTH_SCOPE = 'offline_access https://outlook.office.com/SMTP.Send openid profile email'
+const msOAuth = require('./msOAuth')
 
-/** 回调地址：由请求的 Host 推导（经 Cloudflare 隧道时 Host=域名，与 Azure 登记必须一致）。 */
-function oauthRedirectUri(req) {
-  const host = req.headers.host || 'localhost'
-  return `https://${host}/api/admin/smtp/oauth2/callback`
-}
-
-function redirectOAuth(res, location) {
+/** MS OAuth 授权回调：302 回 /settings（固定相对路径，不依赖 Host 头）。 */
+function redirectHtml(res, location) {
   applySecurityHeaders(res)
   res.writeHead(302, { Location: location })
   res.end()
 }
 
-/** POST 表单到微软 token 端点（code → refresh_token）。 */
-function oauthExchange(form) {
-  return new Promise((resolve, reject) => {
-    const body = Object.entries(form)
-      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&')
-    const req = https.request(OAUTH_TOKEN_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Content-Length': Buffer.byteLength(body),
-      },
-    }, (res) => {
-      let data = ''
-      res.on('data', (c) => (data += c))
-      res.on('end', () => {
-        try {
-          const j = JSON.parse(data)
-          if (res.statusCode >= 400) reject(new Error(j.error_description || j.error || `HTTP ${res.statusCode}`))
-          else resolve(j)
-        } catch {
-          reject(new Error('token 响应解析失败: ' + String(data).slice(0, 160)))
-        }
-      })
-    })
-    req.on('error', reject)
-    req.setTimeout(15000, () => req.destroy(new Error('timeout')))
-    req.end(body)
-  })
+/** MS 令牌的存储钩子（refresh_token 轮换写回 / 失效标记）。 */
+function msStoreHooks() {
+  return {
+    getRefreshToken: async () => store.getSmtpConfig()?.msRefreshToken || '',
+    saveRefreshToken: async (rt) => store.saveMicrosoftAuth({ refreshToken: rt, needsReauth: false }),
+    markReauth: async () => store.saveMicrosoftAuth({ needsReauth: true }),
+  }
+}
+
+/**
+ * 组装实际发信用的 SMTP 配置：
+ *  - oauth2 模式：刷新/轮换 refresh_token 取 access token，SMTP 主机按 tid 自动选（可被 msSmtpHost 覆盖），固定 587 STARTTLS；
+ *  - password 模式：原样返回。
+ * 失败抛错（message 已本地化，可直接给设置页/注册流程展示）。
+ */
+async function smtpForSend() {
+  const smtp = store.getSmtpConfig()
+  if (!smtp) throw new Error('SMTP 未配置 — 请管理员在 设置 → 邮箱配置 中填写')
+  if (smtp.authMode !== 'oauth2') return smtp
+  if (!smtp.msRefreshToken) throw new Error('OAuth2 已启用但未连接 Microsoft 账号 — 请管理员在设置页连接')
+  if (smtp.msNeedsReauth) throw new Error('Microsoft 授权已失效 — 请管理员在设置页重新连接 Microsoft 账号')
+  if (!smtp.user) throw new Error('OAuth2 模式缺少发信邮箱 — 请管理员在设置页填写')
+  try {
+    const accessToken = await msOAuth.getAccessToken('smtp', msStoreHooks())
+    const auto = msOAuth.smtpHostForTid(smtp.msTid)
+    return {
+      ...smtp,
+      host: smtp.msSmtpHost || auto.host,
+      port: smtp.msSmtpHost ? 587 : auto.port,
+      accessToken,
+      accessTokenExpires: undefined,
+    }
+  } catch (e) {
+    if (e.code === 'invalid_grant') throw new Error('Microsoft 授权已失效（invalid_grant）— 请管理员在设置页重新连接')
+    throw new Error(`OAuth2 令牌获取失败：${e.message}`)
+  }
 }
 
 function sendJSON(res, status, obj) {
@@ -239,11 +239,22 @@ function wsFetchHttp(serverId, method, path, body) {
 
 // ================= Steam 资料/头像代理 =================
 
-// steamid -> { avatar, persona, expires }（24h TTL；网络失败用过期缓存兜底）
+/** Steam ID 解析：SLDataAPI 的 steam_id 形如 "7656119xxxxxxxxxx@steam"。
+ *  只接受 17 位纯数字（可带 @steam 后缀）；@northwood/@discord/假人等一律拒绝。 */
+const STEAM_ID_RE = /^(\d{17})(@steam)?$/i
+
+/** 提取纯 SteamID64；非法（非 Steam 账号/假人）返回空串。 */
+function parseSteamId(raw) {
+  const m = String(raw || '').trim().match(STEAM_ID_RE)
+  return m ? m[1] : ''
+}
+
+// steamid -> { avatar, persona, expires }（成功 24h TTL；失败负缓存 3 分钟）
 const steamProfileCache = new Map()
 // steamid -> 头像图片 Buffer（内存缓存，最多 300 张，FIFO 淘汰）
 const avatarImageCache = new Map()
 const STEAM_PROFILE_TTL = 24 * 60 * 60 * 1000
+const STEAM_NEGATIVE_TTL = 3 * 60 * 1000
 
 /** Steam Web API key：优先取设置页保存的配置（加密存储），其次环境变量 PFC_STEAM_KEY。 */
 function steamApiKey() {
@@ -301,11 +312,12 @@ function avatarMirrorUrls(avatarFull) {
 
 /**
  * 解析 Steam 资料。优先 Web API（国内可达），未配置 key 时回退 steamcommunity XML。
- * 固定主机 + steamid 白名单格式（7656 开头 17 位），不存在 SSRF 面。
+ * 固定主机 + steamid 白名单格式（17 位数字，@steam 后缀可带），不存在 SSRF 面。
+ * 失败写 3 分钟负缓存：既不把"无头像"当成功长缓存，也不至于每次请求都打上游。
  */
 async function getSteamProfile(steamid) {
   const hit = steamProfileCache.get(steamid)
-  if (hit && hit.expires > Date.now()) return hit
+  if (hit && hit.expires > Date.now()) return hit.avatar ? hit : null
 
   let prof = null
   const key = steamApiKey()
@@ -326,8 +338,11 @@ async function getSteamProfile(steamid) {
   if (!prof) {
     const buf = await httpGetBuffer(`https://steamcommunity.com/profiles/${steamid}/?xml=1`)
     if (!buf) {
-      // 网络失败：用过期缓存兜底（宁可用旧头像也不让页面空白）
-      return steamProfileCache.get(steamid) ?? null
+      // 网络失败：有旧头像就用旧值兜底一次（不重新写 24h 缓存）；否则负缓存后返回 null
+      const stale = steamProfileCache.get(steamid)
+      if (stale && stale.avatar) return stale
+      steamProfileCache.set(steamid, { avatar: '', persona: '', expires: Date.now() + STEAM_NEGATIVE_TTL })
+      return null
     }
     const xml = buf.toString('utf8')
     const mAv = xml.match(/<avatarFull><!\[CDATA\[([^\]]*)\]\]><\/avatarFull>/)
@@ -337,6 +352,12 @@ async function getSteamProfile(steamid) {
       persona: mPe ? mPe[1] : '',
       expires: Date.now() + STEAM_PROFILE_TTL,
     }
+  }
+
+  if (!prof.avatar) {
+    // 查无此人/无头像：负缓存 3 分钟（绝不把空头像当 24h 成功缓存）
+    steamProfileCache.set(steamid, { avatar: '', persona: '', expires: Date.now() + STEAM_NEGATIVE_TTL })
+    return null
   }
 
   steamProfileCache.set(steamid, prof)
@@ -358,7 +379,8 @@ async function handleApi(req, res, url, method) {
       // 真实客户端 IP：经 Cloudflare 时取 X-Forwarded-For 第一段，否则取 socket 地址
       const ip = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || ''
       try {
-        const r = await auth.sendCode(b.email, ip)
+        // 发信配置惰性解析（OAuth2 模式在此刷新/轮换令牌）；格式/限流检查先于 SMTP 报错
+        const r = await auth.sendCode(b.email, ip, () => smtpForSend())
         return sendJSON(res, 200, { success: true, ...r })
       } catch (e) {
         // 业务错误（格式/限流/SMTP 未配置）统一 400 + 明确文案，不再静默
@@ -604,120 +626,143 @@ async function handleApi(req, res, url, method) {
     }
 
     // ---- 管理员 ----
+    // ---- SMTP 配置（管理员）----
+    // GET 只回安全视图：secret 只回布尔（secretConfigured / refreshTokenConfigured），绝不回明文
     if (p === '/api/admin/smtp' && method === 'GET') {
       const user = currentUser(req)
       auth.requireAdmin(user)
-      const smtp = store.getSmtpConfig()
+      const view = store.getSmtpView()
+      const env = msOAuth.msEnv()
       return sendJSON(res, 200, {
         success: true,
-        smtp: smtp
-          ? {
-              authMode: smtp.authMode,
-              host: smtp.host, port: smtp.port, user: smtp.user, from: smtp.from,
-              clientId: smtp.clientId,
-              configured: true,
-            }
-          : { configured: false },
+        smtp: {
+          ...view,
+          ms: {
+            ...(view.ms ?? { refreshTokenConfigured: false, accountEmail: '', tid: '', hostOverride: '', needsReauth: false }),
+            clientId: env.clientId,
+            tenant: env.tenant,
+            redirectFlowAvailable: !!msOAuth.redirectUriConfigured(),
+          },
+        },
       })
     }
+    // PUT：secret（pass）为空 = 保留原值；显式清除须传 null。MS 令牌不经表单（走设备码/授权码流程）。
     if (p === '/api/admin/smtp' && method === 'PUT') {
       const user = currentUser(req)
       auth.requireAdmin(user)
       const b = await readBody(req)
       store.setSmtpConfig({
-        authMode: b.authMode, host: b.host, port: b.port, user: b.user,
-        pass: b.pass, from: b.from,
-        clientId: b.clientId, clientSecret: b.clientSecret, refreshToken: b.refreshToken,
+        authMode: b.authMode,
+        host: b.host,
+        port: b.port,
+        user: b.user,
+        pass: b.pass === null ? null : (b.pass === undefined || b.pass === '' ? undefined : String(b.pass)),
+        from: b.from,
       })
-      return sendJSON(res, 200, { success: true })
+      return sendJSON(res, 200, { success: true, smtp: store.getSmtpView() })
     }
     if (p === '/api/admin/smtp/test' && method === 'POST') {
-      // 测试发送：用表单当前值（不保存）真实发一封，报告 host/端口/解析 IP，用于定位配置问题
+      // 测试发送：只收收件人，凭据一律用【已保存】的配置（避免表单半成品干扰判断）
       const user = currentUser(req)
       auth.requireAdmin(user)
       const b = await readBody(req)
-      // 收件人优先级：显式 to > 发信邮箱 user > 发件人 from（from 可能只是显示名，必须最后兜底）
-      const to = String(b.to || b.user || b.from || '').trim()
+      // 收件人优先级：显式 to > 发信邮箱 > 发件人 from（from 可能只是显示名，必须最后兜底）
+      const view = store.getSmtpView()
+      const to = String(b.to || view.user || view.from || '').trim()
       if (!to) return sendJSON(res, 400, { success: false, message: '缺少测试收件地址（请填写发信邮箱或收件地址）' })
-      const cfg = {
-        authMode: b.authMode === 'oauth2' ? 'oauth2' : 'password',
-        host: b.host, port: b.port, user: b.user, pass: b.pass, from: b.from,
-        clientId: b.clientId, clientSecret: b.clientSecret, refreshToken: b.refreshToken,
-      }
       try {
-        const r = await mail.sendTest(cfg, to)
+        const smtp = await smtpForSend()
+        const r = await mail.sendTest(smtp, to)
         return sendJSON(res, 200, { success: true, ...r })
       } catch (e) {
         return sendJSON(res, 200, { success: false, message: e.message, host: e.host, port: e.port, ip: e.ip })
       }
     }
-    if (p === '/api/admin/smtp/oauth2/start' && method === 'GET') {
-      // 生成微软授权 URL（读取已保存的 clientId/clientSecret；浏览器跳转过去）
+
+    // ---- Microsoft OAuth（SMTP XOAUTH2，仅管理员；默认设备代码流）----
+    if (p === '/api/admin/smtp/ms/device/start' && method === 'POST') {
       const user = currentUser(req)
       auth.requireAdmin(user)
-      const smtp = store.getSmtpConfig()
-      if (!smtp || !smtp.clientId || !smtp.clientSecret) {
-        return sendJSON(res, 400, { success: false, message: '请先在邮箱配置中保存 Client ID / Client Secret（OAuth2 模式）' })
+      try {
+        const r = await msOAuth.startDeviceCode(user.username)
+        return sendJSON(res, 200, { success: true, ...r })
+      } catch (e) {
+        return sendJSON(res, 502, { success: false, message: `设备代码请求失败：${e.message}` })
       }
-      const state = crypto.randomToken(24)
-      oauthStates.set(state, { clientId: smtp.clientId, clientSecret: smtp.clientSecret, expires: Date.now() + 10 * 60 * 1000 })
-      // 顺手清理过期会话
-      for (const [k, v] of oauthStates) if (v.expires < Date.now()) oauthStates.delete(k)
-      const redirectUri = oauthRedirectUri(req)
-      const url = OAUTH_AUTH_URL +
-        '?client_id=' + encodeURIComponent(smtp.clientId) +
-        '&response_type=code' +
-        '&redirect_uri=' + encodeURIComponent(redirectUri) +
-        '&scope=' + encodeURIComponent(OAUTH_SCOPE) +
-        '&response_mode=query' +
-        '&state=' + encodeURIComponent(state)
-      return sendJSON(res, 200, { success: true, url, redirectUri })
     }
-    if (p === '/api/admin/smtp/oauth2/callback' && method === 'GET') {
-      // 微软回跳（浏览器直达，无 Authorization 头 —— state 即凭证，10 分钟有效）
+    if (p === '/api/admin/smtp/ms/device/poll' && method === 'POST') {
+      const user = currentUser(req)
+      auth.requireAdmin(user)
+      const b = await readBody(req)
+      const r = await msOAuth.pollDeviceCode(String(b.id || ''), user.username)
+      if (r.status === 'done') {
+        // 授权成功：解析 id_token，保存 refresh_token（加密）、账户邮箱、tid
+        const tokens = r.tokens
+        const idInfo = msOAuth.parseIdToken(tokens.id_token || '')
+        if (!tokens.refresh_token) {
+          return sendJSON(res, 502, { success: false, message: '上游未返回 refresh_token（缺少 offline_access scope？），无法持久授权' })
+        }
+        store.saveMicrosoftAuth({
+          refreshToken: String(tokens.refresh_token),
+          accountEmail: idInfo.email,
+          tid: idInfo.tid,
+          needsReauth: false,
+        })
+        msOAuth.invalidateAccessToken('smtp')
+        console.log('[PFC] Microsoft OAuth：授权账户', idInfo.email || '(未知)', '，tid', idInfo.tid || '(未知)')
+        return sendJSON(res, 200, {
+          success: true,
+          status: 'done',
+          accountEmail: idInfo.email,
+          smtpHost: (store.getSmtpConfig()?.msSmtpHost) || msOAuth.smtpHostForTid(idInfo.tid).host,
+        })
+      }
+      return sendJSON(res, 200, { success: r.status !== 'error', status: r.status, interval: r.interval, message: r.message })
+    }
+    // 可选：授权码 + PKCE 跳转流（配置 PFC_MS_REDIRECT_URI 或 PFC_PUBLIC_URL 后出现）
+    if (p === '/api/admin/smtp/ms/authorize/start' && method === 'GET') {
+      const user = currentUser(req)
+      auth.requireAdmin(user)
+      const r = msOAuth.startAuthorize(user.username)
+      if (!r) return sendJSON(res, 400, { success: false, message: '未配置回调地址（PFC_MS_REDIRECT_URI 或 PFC_PUBLIC_URL）— 请使用设备代码流' })
+      return sendJSON(res, 200, { success: true, url: r.url })
+    }
+    if (p === '/api/admin/smtp/ms/authorize/callback' && method === 'GET') {
+      // 浏览器回跳：无 Authorization 头，靠 HttpOnly 会话 cookie 验管理员身份；state 绑定发起会话
       const q = new URLSearchParams(url.search || '')
+      const errMsg = q.get('error_description') || q.get('error')
       const code = q.get('code')
       const state = q.get('state')
-      const errMsg = q.get('error_description') || q.get('error')
-      const entry = state ? oauthStates.get(state) : null
+      const user = currentUser(req)
+      if (!user || user.role !== 'admin') {
+        return redirectHtml(res, '/settings?msauth=error&msg=' + encodeURIComponent('回调会话无效：请用发起授权的管理员账号登录后重试'))
+      }
       if (errMsg) {
-        return redirectOAuth(res, '/settings?oauth=error&msg=' + encodeURIComponent('微软拒绝授权：' + errMsg))
+        return redirectHtml(res, '/settings?msauth=error&msg=' + encodeURIComponent('微软拒绝授权：' + errMsg))
       }
-      if (!code || !entry) {
-        return redirectOAuth(res, '/settings?oauth=error&msg=' + encodeURIComponent('授权回调无效或已过期，请重新点击"连接 Microsoft 账号"'))
+      const r = await msOAuth.redeemAuthorize(state, code, user.username)
+      if (r.error) {
+        return redirectHtml(res, '/settings?msauth=error&msg=' + encodeURIComponent(r.error_description || r.error))
       }
-      oauthStates.delete(state)
-      try {
-        const tok = await oauthExchange({
-          client_id: entry.clientId,
-          client_secret: entry.clientSecret,
-          code,
-          redirect_uri: oauthRedirectUri(req),
-          grant_type: 'authorization_code',
-          scope: OAUTH_SCOPE,
-        })
-        let email = ''
-        try {
-          const idt = JSON.parse(Buffer.from(tok.id_token.split('.')[1], 'base64url').toString('utf8'))
-          email = idt.email || idt.preferred_username || ''
-        } catch { /* id_token 缺失时发信邮箱保持原值 */ }
-        const cur = store.getSmtpConfig() || {}
-        store.setSmtpConfig({
-          authMode: 'oauth2',
-          host: cur.host || 'smtp.office365.com',
-          port: cur.port || 587,
-          user: email || cur.user || '',
-          pass: cur.pass,
-          from: cur.from || '',
-          clientId: entry.clientId,
-          clientSecret: entry.clientSecret,
-          refreshToken: tok.refresh_token || '',
-        })
-        console.log(`[PFC] OAuth2 授权成功：${email || '(邮箱未知)'}`)
-        return redirectOAuth(res, '/settings?oauth=ok')
-      } catch (e) {
-        return redirectOAuth(res, '/settings?oauth=error&msg=' + encodeURIComponent('换取 token 失败：' + e.message))
+      const idInfo = msOAuth.parseIdToken(r.id_token || '')
+      if (!r.refresh_token) {
+        return redirectHtml(res, '/settings?msauth=error&msg=' + encodeURIComponent('上游未返回 refresh_token（缺少 offline_access scope？）'))
       }
+      store.saveMicrosoftAuth({
+        refreshToken: String(r.refresh_token),
+        accountEmail: idInfo.email,
+        tid: idInfo.tid,
+        needsReauth: false,
+      })
+      msOAuth.invalidateAccessToken('smtp')
+      return redirectHtml(res, '/settings?msauth=ok')
+    }
+    if (p === '/api/admin/smtp/ms/disconnect' && method === 'POST') {
+      const user = currentUser(req)
+      auth.requireAdmin(user)
+      store.clearMicrosoftAuth()
+      msOAuth.invalidateAccessToken('smtp')
+      return sendJSON(res, 200, { success: true })
     }
     if (p === '/api/admin/users' && method === 'GET') {
       const user = currentUser(req)
@@ -809,9 +854,10 @@ async function handleApi(req, res, url, method) {
     if (p === '/api/steam/profile' && method === 'GET') {
       const user = currentUser(req)
       if (!user) return sendJSON(res, 401, { success: false, message: '未登录' })
-      const steamid = String(url.searchParams.get('steamid') || '').trim()
-      if (!/^7656\d{13}$/.test(steamid)) {
-        return sendJSON(res, 400, { success: false, message: 'steamid 非法' })
+      // SLDataAPI 的 steam_id 带 @steam 后缀（如 76561198xxx@steam）：统一在这里剥掉
+      const steamid = parseSteamId(url.searchParams.get('steamid'))
+      if (!steamid) {
+        return sendJSON(res, 400, { success: false, message: 'steamid 非法（仅支持 SteamID64，@northwood/@discord/假人不提供头像）' })
       }
       const prof = await getSteamProfile(steamid)
       if (!prof || !prof.avatar) return sendJSON(res, 404, { success: false, message: '获取 Steam 资料失败' })
@@ -825,9 +871,9 @@ async function handleApi(req, res, url, method) {
     if (p === '/api/steam/avatar' && method === 'GET') {
       const user = currentUser(req)
       if (!user) return sendJSON(res, 401, { success: false, message: '未登录' })
-      const steamid = String(url.searchParams.get('steamid') || '').trim()
-      if (!/^7656\d{13}$/.test(steamid)) {
-        return sendJSON(res, 400, { success: false, message: 'steamid 非法' })
+      const steamid = parseSteamId(url.searchParams.get('steamid'))
+      if (!steamid) {
+        return sendJSON(res, 400, { success: false, message: 'steamid 非法（仅支持 SteamID64）' })
       }
       const prof = await getSteamProfile(steamid)
       if (!prof || !prof.avatar) {

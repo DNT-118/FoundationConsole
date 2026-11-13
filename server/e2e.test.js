@@ -241,7 +241,8 @@ async function waitForServer(timeoutMs = 20_000) {
   const memberToken = r.body.token
 
   // 25) owner2 建服务器
-  r = await req('POST', '/api/servers', { host: 'gameserver.example.test', port: 8081, token: 'vt', apiKey: 'ak', label: 'R4Srv' }, owner2Token)
+  // 用 TEST-NET-3 IP 字面量：不依赖 DNS（CI 无法解析 .test 域名），控制调用会在上游超时后返回非 403
+  r = await req('POST', '/api/servers', { host: '203.0.113.10', port: 8081, token: 'vt', apiKey: 'ak', label: 'R4Srv' }, owner2Token)
   assert('R4 owner2 建服务器', r.status === 200 && r.body.server?.id && r.body.server.role === 'owner', JSON.stringify(r.body))
   const srvId = r.body.server.id
 

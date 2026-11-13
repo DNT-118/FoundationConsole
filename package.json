@@ -23,7 +23,7 @@
     "typecheck": "tsc -b --noEmit",
     "test": "npm run test:syntax && npm run test:unit && npm run test:frontend && npm run test:e2e",
     "test:syntax": "node scripts/check-syntax.cjs",
-    "test:unit": "node server/totp.test.js && node --test server/security.test.js server/store.test.js server/upstream.test.js server/wsHub.test.js server/msOAuth.test.js server/staticFiles.test.js",
+    "test:unit": "node server/totp.test.js && node --test server/security.test.js server/store.test.js server/upstream.test.js server/wsHub.test.js server/msOAuth.test.js server/round4.test.js server/staticFiles.test.js",
     "test:e2e": "node server/e2e.test.js",
     "test:frontend": "node --experimental-strip-types --test tests/*.test.mjs",
     "obfuscate": "node server/obfuscate.js",

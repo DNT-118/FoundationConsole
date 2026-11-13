@@ -27,10 +27,11 @@ const KIND_PATH = {
 }
 
 function withTimeout(p) {
+  let t
   return Promise.race([
     p,
-    new Promise((resolve) => setTimeout(() => resolve({ ok: false, message: '执行超时' }), EXEC_TIMEOUT_MS)),
-  ])
+    new Promise((resolve) => { t = setTimeout(() => resolve({ ok: false, message: '执行超时' }), EXEC_TIMEOUT_MS) }),
+  ]).finally(() => clearTimeout(t))   // 执行完即清超时定时器，不让悬挂定时器拖住进程
 }
 
 /** 到期判定：enabled 且 now >= lastRunAt + intervalSeconds（lastRunAt=0 表示从未跑过 → 立即执行一次）。 */
@@ -47,6 +48,13 @@ async function tick(now = Date.now()) {
   try {
     for (const s of store.listSchedulesForScheduler()) {
       if (!isDue(s, now)) continue
+      // 执行时复核创建者权限：创建者被移除/降级到 manager 以下后，其任务不得继续借所有者凭据执行
+      // （创建者账号已被删除时同样跳过——删号不会清理其成员关系）
+      const role = store.getUser(s.username) ? store.accessRole(s.username, s.serverId) : null
+      if (role !== 'owner' && role !== 'manager') {
+        store.recordScheduleRun(s.id, false, '创建者已无该服务器的所有者/管理者权限，任务已跳过')
+        continue
+      }
       executed += 1
       const path = KIND_PATH[s.kind]
       let result

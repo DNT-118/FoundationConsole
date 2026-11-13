@@ -163,6 +163,16 @@ test('schedules: permission, due evaluation, executor runs and persistence', asy
   // 执行记录滚动上限
   for (let i = 0; i < 25; i++) store.recordScheduleRun(sch.id, true, 'x')
   assert.equal(store.listSchedules('owner1').find((s) => s.id === sch.id).runs.length, 20)
+  // 创建者失去 manager+ 权限后，调度器跳过其任务（不借所有者凭据继续执行）
+  store.upsertUser('mgrTmp', { username: 'mgrTmp', role: 'user', email: 'mgrtmp@example.test', createdAt: Date.now() })
+  assert.equal(store.setMember(srv.id, 'owner1', 'mgrTmp', 'manager').ok, true)
+  const orphan = store.addSchedule('mgrTmp', srv.id, { kind: 'broadcast', payload: { message: 'orphan' }, intervalSeconds: 60 })
+  assert.equal(store.removeMember(srv.id, 'owner1', 'mgrTmp').ok, true)
+  const before = calls.length
+  await scheduler.tick(Date.now() + 1)
+  assert.equal(calls.filter((c, i) => i >= before && c.body?.message === 'orphan').length, 0)
+  assert.equal(store.listSchedules('owner1').find((s) => s.id === orphan.id).lastStatus, 'fail')
+  assert.equal(store.removeSchedule('owner1', orphan.id), true)
   // 删除：viewer 不能
   assert.throws(() => store.removeSchedule('viewer1', sch.id), /仅所有者或管理者/)
   assert.equal(store.removeSchedule('owner1', sch.id), true)

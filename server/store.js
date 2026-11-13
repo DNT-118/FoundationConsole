@@ -219,6 +219,10 @@ function setMember(serverId, actorUsername, target, role) {
   const actorRole = accessRole(actorUsername, serverId)
   if (actorRole !== 'owner' && actorRole !== 'manager') return { ok: false, error: '仅所有者或管理者可管理成员' }
   if (target === d.owner) return { ok: false, error: '不能修改所有者的角色' }
+  // 与 removeMember 一致：manager 不能改动其他 manager 的角色（防止降级后再移除）
+  if (actorRole === 'manager' && target !== actorUsername && d.members[target] === 'manager') {
+    return { ok: false, error: '管理者不能修改其他管理者的角色' }
+  }
   if (target !== actorUsername && actorRole !== 'owner') {
     // manager 只能授予不高于自己的角色
     const granted = SERVER_ROLES.indexOf(role)

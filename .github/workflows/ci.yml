@@ -102,6 +102,10 @@ jobs:
             echo "::error::标签 $tag 已存在，请先提升 package.json 版本"
             exit 1
           fi
+          if [ ! -s "docs/release-notes/v$pkg_version.md" ]; then
+            echo "::error::缺少更新日志 docs/release-notes/v$pkg_version.md，拒绝发布"
+            exit 1
+          fi
           echo "version=$pkg_version" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
@@ -166,15 +170,16 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
+          notes_src="docs/release-notes/v$VERSION.md"
+          if [ ! -s "$notes_src" ]; then
+            echo "::error::缺少更新日志 $notes_src，拒绝发布（Release 正文必须包含完整更新日志）"
+            exit 1
+          fi
+          {
+            cat "$notes_src"
+            printf '\n---\n\n构建提交：`%s`\n' "$GITHUB_SHA"
+          } > release/notes.md
           cd release
-          cat > notes.md <<NOTES
-          Foundation Console v$VERSION
-
-          发布包：\`fdc-v$VERSION.tar.gz\`（前端 dist + 混淆后端）。
-          校验与验签方法见仓库 README 的「发布与验签」一节；公钥：\`keys/fdc-release.pub.pem\`。
-
-          提交：$GITHUB_SHA
-          NOTES
           gh release create "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \

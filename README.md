@@ -165,6 +165,8 @@ npm run obfuscate      # 生成混淆后端 server-dist/
 
   例如先把 `package.json` 改成 `0.3.0`，再提交 `chore: release 0.3.0 [release v0.3.0]`。工作流会构建发布包、签名、创建标签 `vX.Y.Z` 和 GitHub Release，上传发布包、签名和 SHA256 校验值。标签已存在、缺少签名 Secret 或公钥时会直接失败，不会发布未签名的包。
 
+  每个版本必须先写好 `docs/release-notes/vX.Y.Z.md`（并在 [CHANGELOG.md](CHANGELOG.md) 补一条摘要），工作流会把它原样作为 Release 正文；缺少该文件时同样直接失败。
+
 ### 发布与验签
 
 发布包使用 Ed25519 签名（OpenSSL 3）。仓库所有者首次配置：

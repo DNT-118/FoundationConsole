@@ -3,7 +3,7 @@
 > 这是 **`pages-demo` 演示分支**，只用于构建 GitHub Pages 在线演示，不是正式发布源码。
 > 正式开源版本（含 Node 后端）、部署说明和完整代码请看 [`main` 分支](https://github.com/DNT-118/FoundationConsole/tree/main)。
 
-在线演示（仓库公开并启用 Pages 后）：<https://dnt-118.github.io/FoundationConsole/>
+在线演示（仓库公开并启用 Pages 后）：<https://fdc.dntof.com/>
 
 FDC 是面向 **SCP: Secret Laboratory** 服主的 Web 管理面板，对接 [SLDataAPI](https://github.com/DNTOF/SLDataAPI)。
 本分支基于 **v0.2.0** 前端（已与 SLDataAPI main 对齐：2.6.x 路由与错误提示、混沌分裂者单独成队、Steam `@steam` 头像修复、设置里的背景选项等），

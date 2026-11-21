@@ -32,9 +32,16 @@ jobs:
           npm run typecheck
           npm test
       - name: Build demo
-        run: npm run build:demo
-        env:
-          FDC_BASE: ${{ steps.pages.outputs.base_path }}/
+        # 自定义域名 fdc.dntof.com 时 base_path 为 "/"，不能再拼成 "//"。
+        run: |
+          raw="${{ steps.pages.outputs.base_path }}"
+          if [ -z "$raw" ] || [ "$raw" = "/" ]; then
+            export FDC_BASE=/
+          else
+            export FDC_BASE="${raw%/}/"
+          fi
+          echo "FDC_BASE=$FDC_BASE"
+          npm run build:demo
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

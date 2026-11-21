@@ -8,7 +8,7 @@ import { DEMO_BANNER_TEXT } from './mode'
  */
 const css = `
 @keyframes fdc-demo-blink {
-  0%, 49% { background-color: #FF3B30; }
+  0%, 50% { background-color: #FF3B30; }
   50%, 100% { background-color: #7F1010; }
 }
 @keyframes fdc-demo-pulse {
@@ -16,7 +16,7 @@ const css = `
   50% { background-color: #D32F2F; }
 }
 #fdc-demo-banner {
-  animation: fdc-demo-blink 1s step-end infinite;
+  animation: fdc-demo-blink 2s step-end infinite;
 }
 @media (prefers-reduced-motion: reduce) {
   #fdc-demo-banner { animation: fdc-demo-pulse 3s ease-in-out infinite; }

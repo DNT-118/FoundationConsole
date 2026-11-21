@@ -2,7 +2,7 @@
 
 **SCP: Secret Laboratory 服主团队自部署的私有内部管理平台**（开源，Apache-2.0）。由 React 前端和 Node.js 后端组成，部署在团队自己的服务器上，通过 [SLDataAPI](https://github.com/DNTOF/SLDataAPI) 读取和控制游戏服务器。面向服主与团队成员使用，不是公共托管服务：账户、服务器配置、分享与权限都只属于你自己的部署实例。
 
-在线演示：<https://dnt-118.github.io/FoundationConsole/>
+在线演示：<https://fdc.dntof.com/>
 
 ## 功能概览
 

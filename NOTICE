@@ -37,5 +37,9 @@ This project is licensed under the Apache License, Version 2.0. See LICENSE.
 - SLDataAPI：https://github.com/DNTOF/SLDataAPI
 - SLConsole（Android）：https://github.com/DNTOF/SLConsole
 
+四、致谢 / Acknowledgements
+- FXDYJ（https://github.com/FXDYJ）：部分版本的维护者，地图脚本（地图布局/几何数据，参见 https://scpslmaps.fxdyj.com）的提供者。
+- FXDYJ (https://github.com/FXDYJ): maintainer of some versions, and provider of the map scripts (map layout/geometry data; see https://scpslmaps.fxdyj.com).
+
 复用或再发布时请保留本 NOTICE，并注明来自 DNT-118/FoundationConsole。
 Keep this NOTICE and credit DNT-118/FoundationConsole when reusing or redistributing.

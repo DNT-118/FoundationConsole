@@ -198,3 +198,5 @@ openssl pkeyutl -verify -pubin -inkey keys/fdc-release.pub.pem -rawin \
 [Apache License 2.0](./LICENSE)。版权与致谢见 [NOTICE](./NOTICE)。
 
 作者：DNT_OF（[DNTOF](https://github.com/DNTOF)）
+
+致谢：[FXDYJ](https://github.com/FXDYJ) —— 部分版本的维护者，地图脚本（地图布局/几何数据，参见 [scpslmaps.fxdyj.com](https://scpslmaps.fxdyj.com)）的提供者

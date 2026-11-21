@@ -104,20 +104,31 @@ export default function About() {
           </div>
         </section>
 
-        {/* 特别鸣谢 */}
+        {/* 特别鸣谢：内置条目始终显示，不能被关于页配置去掉 */}
         <section className="border border-ink-border bg-ink-deep p-4">
           <SectionLabel>{t('about.thanks')}</SectionLabel>
-          {about && about.thanks.length > 0 ? (
-            <ul className="mt-3 space-y-1.5 font-mono text-[11px] text-foreground/90">
-              {about.thanks.map((x, i) => (
-                <li key={i} className="flex items-start gap-2">
-                  <span className="text-ink-mute">·</span> {x}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="mt-3 font-mono text-[10px] text-ink-mute">// —</p>
-          )}
+          <ul className="mt-3 space-y-1.5 font-mono text-[11px] text-foreground/90">
+            <li className="flex items-start gap-2">
+              <span className="text-ink-mute">·</span>
+              <span>
+                <a
+                  href="https://github.com/FXDYJ"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline decoration-ink-border underline-offset-2 transition-colors hover:text-foreground hover:decoration-inverse"
+                >
+                  FXDYJ
+                </a>
+                {' —— '}
+                {t('about.thanksFxdyj')}
+              </span>
+            </li>
+            {(about?.thanks ?? []).filter((x) => !isFixedThanksDuplicate(x)).map((x, i) => (
+              <li key={i} className="flex items-start gap-2">
+                <span className="text-ink-mute">·</span> {x}
+              </li>
+            ))}
+          </ul>
         </section>
 
         {/* 赞助 */}
@@ -184,6 +195,7 @@ export default function About() {
                 rows={5}
                 className="mt-1 w-full resize-y border border-ink-border bg-ink px-3 py-2 font-mono text-[12px] leading-relaxed text-foreground placeholder:text-ink-mute focus:outline-none focus:border-inverse"
               />
+              <p className="mt-1 font-mono text-[9px] text-ink-mute">{t('about.thanksFixedHint')}</p>
               <p className="mt-1 font-mono text-[9px] text-ink-mute">{t('about.lineHint')}</p>
               <div className="mt-4 flex items-center justify-end gap-2">
                 <button
@@ -206,6 +218,12 @@ export default function About() {
       </AnimatePresence>
     </PageStub>
   )
+}
+
+
+function isFixedThanksDuplicate(line: string): boolean {
+  const s = line.trim().toLowerCase()
+  return s === 'fxdyj' || s.includes('github.com/fxdyj')
 }
 
 function SectionLabel({ children }: { children: React.ReactNode }) {

@@ -689,6 +689,8 @@ export const dict = {
     'about.thanksPh': '每行一位感谢对象…',
     'about.sponsorsPh': '每行一位赞助者…',
     'about.lineHint': '// 每行一条，保存后立即生效',
+    'about.thanksFxdyj': '部分版本的维护者，地图脚本（地图布局/几何数据，参见 scpslmaps.fxdyj.com）的提供者',
+    'about.thanksFixedHint': '「FXDYJ」为内置特别鸣谢，始终显示，无法在此删除。',
 
     // Players 补充
 
@@ -1453,6 +1455,8 @@ export const dict = {
     'about.thanksPh': 'One entry per line…',
     'about.sponsorsPh': 'One sponsor per line…',
     'about.lineHint': '// one entry per line; applies immediately on save',
+    'about.thanksFxdyj': 'Maintainer of some versions, and provider of the map scripts (map layout/geometry data; see scpslmaps.fxdyj.com)',
+    'about.thanksFixedHint': 'FXDYJ is a built-in special thanks entry; it is always shown and cannot be removed here.',
 
 
     'slp.title': 'SLPlayer Music',
